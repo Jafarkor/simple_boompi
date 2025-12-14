@@ -1,0 +1,11 @@
+aiogram==3.12.0
+environs
+asyncpg
+redis
+
+python-docx
+PyPDF2
+openpyxl
+pylatexenc
+
+openai
