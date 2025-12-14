@@ -4,13 +4,11 @@ services:
     build: .
     depends_on:
       - redis
-      - db
     ports:
       - "8080:8080"  # Веб-сервер бота на 8080
     volumes:
       - ./output:/app/output
     environment:
-      - DATABASE_URL=postgresql://my_bot_user:22032008JafibnMar!@db:5432/my_bot_db
       - REDIS_URL=redis://redis:6379/0
 
   nginx:
@@ -21,22 +19,11 @@ services:
     volumes:
       - ./output:/usr/share/nginx/html/output  # Монтируем output для раздачи файлов
       - ./media:/usr/share/nginx/html/media    # Для статических файлов из media
-      - ./nginx.conf:/etc/nginx/nginx.conf     # Кастомный конфиг Nginx
-      - /etc/letsencrypt:/etc/letsencrypt      # SSL-сертификаты от Certbot
     depends_on:
       - bot
 
   redis:
     image: redis:alpine
-
-  db:
-    image: postgres:15
-    environment:
-      POSTGRES_USER: my_bot_user
-      POSTGRES_PASSWORD: 22032008JafibnMar!
-      POSTGRES_DB: my_bot_db
-    volumes:
-      - pgdata:/var/lib/postgresql/data
 
 volumes:
   pgdata:
