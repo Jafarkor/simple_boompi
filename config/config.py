@@ -11,7 +11,7 @@ env.read_env()
 
 BOT_TOKEN: str = env("BOT_TOKEN")
 bot: Bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode='HTML'))
-redis = Redis(host='localhost')
+redis = Redis(host='redis')
 storage = RedisStorage(redis=redis)
 dp = Dispatcher(storage=storage)
 
