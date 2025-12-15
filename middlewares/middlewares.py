@@ -1,10 +1,9 @@
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject, User, InlineKeyboardButton
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import TelegramObject, User
 
 from typing import Callable, Any
 import logging
-from config.config import redis, CHANNEL_USERNAME
+from config.config import redis
 
 redis_client = redis.from_url("redis://localhost")
 
@@ -20,7 +19,7 @@ class GeneralMiddleware(BaseMiddleware):
                        event: TelegramObject,
                        data: dict[str, Any]) -> Any:
         user: User | None = data["event_from_user"]
-        
+
         try:
             return await handler(event, data)
 

@@ -10,7 +10,6 @@ from config.config import redis, client, MAX_CONTEXT_MESSAGES, SYSTEM_PROMPT, MA
 import logging
 import re
 import os
-import uuid
 
 
 logging.basicConfig(level=logging.INFO)

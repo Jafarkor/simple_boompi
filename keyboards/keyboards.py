@@ -1,5 +1,5 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from config.config import SUPPORT_USERNAME, subscriptions, CHANNEL_USERNAME
+from config.config import SUPPORT_USERNAME, CHANNEL_USERNAME
 
 
 def get_feedback_keyboard():

@@ -2,14 +2,14 @@ from utils.functions import (read_pdf, read_docx, read_txt, process_request,
                              markdown_to_telegram_html, process_audio_with_whisper,
                              save_context)
 from lexicon.lexicon import LEXICON_RU as lexicon
-from keyboards.keyboards import subscribtion_second_keyboard, channel_subscription_keyboard
+from keyboards.keyboards import channel_subscription_keyboard
 from aiogram import F, Router
 from aiogram.types import Message, CallbackQuery
 from aiogram.enums.chat_member_status import ChatMemberStatus
 from pathlib import Path
 import os
 import asyncio
-from config.config import MAX_WORD_COUNT, CHANNEL_USERNAME, USE_STREAM, subscriptions
+from config.config import MAX_WORD_COUNT, CHANNEL_USERNAME, USE_STREAM
 import logging
 import aiofiles
 
@@ -169,14 +169,6 @@ async def voice_handler(msg: Message):
 
         text = await process_audio_with_whisper(telegram_id=msg.from_user.id, file_path=voice_path)
         os.remove(voice_path)
-
-        if text == 0:
-            from aiogram.types import FSInputFile
-            return await msg.answer_photo(
-                photo=FSInputFile("media/subscription.jpg"),
-                caption=lexicon["no_balance_or_sub"].format(subscriptions["monthly"]["price"] // 100),
-                reply_markup=subscribtion_second_keyboard
-            )
 
         await process_content(msg, text)
     except Exception as e:
