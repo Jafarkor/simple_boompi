@@ -59,7 +59,6 @@ async def handle_streaming_response(msg: Message, stream_response, content: str)
     MIN_UPDATE_INTERVAL = 0.8
     MIN_CHUNK_SIZE = 50
     MAX_CHUNK_SIZE = 150
-    MAX_MESSAGE_LENGTH = 3900
 
     last_update_time = asyncio.get_event_loop().time() - MIN_UPDATE_INTERVAL
 
@@ -80,19 +79,6 @@ async def handle_streaming_response(msg: Message, stream_response, content: str)
 
         if should_update:
             full_response += buffer
-
-            if len(full_response) >= MAX_MESSAGE_LENGTH:
-                full_response = full_response[:MAX_MESSAGE_LENGTH] + "..."
-                html_answer = markdown_to_telegram_html(full_response)
-
-                try:
-                    if message is None:
-                        message = await msg.answer(html_answer, parse_mode="HTML")
-                    else:
-                        await message.edit_text(html_answer, parse_mode="HTML")
-                except Exception as e:
-                    logging.error(f"Failed to update message: {e}")
-                break
 
             html_answer = markdown_to_telegram_html(full_response)
 

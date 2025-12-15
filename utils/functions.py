@@ -6,7 +6,7 @@ import PyPDF2
 import json
 from datetime import datetime
 import base64
-from config.config import redis, client, MAX_CONTEXT_MESSAGES, SYSTEM_PROMPT, MAX_ANSWER_SYMS, MODEL_NAME
+from config.config import redis, client, MAX_CONTEXT_MESSAGES, SYSTEM_PROMPT, MODEL_NAME
 import logging
 import re
 import os
@@ -49,10 +49,6 @@ async def process_audio_with_whisper(telegram_id, file_path: str) -> str:
 
 
 def is_simple_response(text: str) -> bool:
-    # Проверяем длину
-    if len(text) > MAX_ANSWER_SYMS:
-        return False
-
     # Проверяем наличие формул (Markdown с $$ или $)
     if re.search(r'\$\$.*?\$\$|\$.*?\$', text):
         return False
@@ -169,7 +165,7 @@ async def process_request(telegram_id: str, content: str = "Реши", image_pat
         response = await client.chat.completions.create(
             messages=messages,
             model=MODEL_NAME,
-            max_tokens=1000,
+            max_tokens=700,
             stream=True,
             stream_options={"include_usage": True}
         )
