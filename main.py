@@ -9,7 +9,7 @@ from keyboards.set_menu import set_main_menu
 logging.basicConfig(level=logging.INFO)
 
 # Конфигурация webhook
-WEBHOOK_HOST = "https://boompiai.ru"
+WEBHOOK_HOST = "https://boompi.ru"  # ЗАМЕНИТЕ на ваш домен
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
@@ -17,7 +17,7 @@ WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 WEBAPP_HOST = "0.0.0.0"
 WEBAPP_PORT = 8080
 
-async def on_startup():
+async def on_startup(app):
     """Действия при запуске бота"""
     logging.info("Starting bot initialization")
     try:
@@ -25,20 +25,23 @@ async def on_startup():
         logging.info("Main menu set")
 
         # Устанавливаем webhook
-        await bot.set_webhook(
-            url=WEBHOOK_URL,
-            drop_pending_updates=True,
-            allowed_updates=dp.resolve_used_update_types()
-        )
-        logging.info(f"Webhook set to {WEBHOOK_URL}")
+        webhook_info = await bot.get_webhook_info()
+        if webhook_info.url != WEBHOOK_URL:
+            await bot.set_webhook(
+                url=WEBHOOK_URL,
+                drop_pending_updates=True,
+                allowed_updates=dp.resolve_used_update_types()
+            )
+            logging.info(f"Webhook set to {WEBHOOK_URL}")
+        else:
+            logging.info(f"Webhook already set to {WEBHOOK_URL}")
 
     except Exception as e:
         logging.error(f"Error in startup: {e}")
 
-async def on_shutdown():
+async def on_shutdown(app):
     """Действия при остановке бота"""
     logging.info("Shutting down bot")
-    await bot.delete_webhook()
     await bot.session.close()
 
 def main():
@@ -49,12 +52,12 @@ def main():
     dp.include_router(final.rt)
     logging.info("Routers included")
 
-    # Регистрируем startup и shutdown функции
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
-
     # Создаем aiohttp приложение
     app = web.Application()
+
+    # Регистрируем startup и shutdown для aiohttp app
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
 
     # Регистрируем webhook handler от aiogram
     from aiogram.webhook.aiohttp_server import SimpleRequestHandler
