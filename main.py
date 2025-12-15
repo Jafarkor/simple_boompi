@@ -9,7 +9,7 @@ from keyboards.set_menu import set_main_menu
 logging.basicConfig(level=logging.INFO)
 
 # Конфигурация webhook
-WEBHOOK_HOST = "https://boompi.ru"  # ЗАМЕНИТЕ на ваш домен
+WEBHOOK_HOST = "https://boompiai.ru"  # ЗАМЕНИТЕ на ваш домен
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
