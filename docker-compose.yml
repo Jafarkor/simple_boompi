@@ -4,12 +4,13 @@ services:
     build: .
     depends_on:
       - redis
-    ports:
-      - "8080:8080"  # Веб-сервер бота на 8080
+    expose:
+      - "8080"  # Внутренний порт для nginx
     volumes:
       - ./output:/app/output
     environment:
       - REDIS_URL=redis://redis:6379/0
+    restart: unless-stopped
 
   nginx:
     image: nginx:latest
@@ -17,13 +18,30 @@ services:
       - "80:80"    # HTTP
       - "443:443"  # HTTPS
     volumes:
-      - ./output:/usr/share/nginx/html/output  # Монтируем output для раздачи файлов
-      - ./media:/usr/share/nginx/html/media    # Для статических файлов из media
+      - ./output:/usr/share/nginx/html/output
+      - ./media:/usr/share/nginx/html/media
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf  # Конфиг nginx
+      - certbot-etc:/etc/letsencrypt  # Сертификаты SSL
+      - certbot-var:/var/lib/letsencrypt
     depends_on:
       - bot
+    restart: unless-stopped
 
   redis:
     image: redis:alpine
+    restart: unless-stopped
+
+  # Certbot для получения SSL сертификатов
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot-etc:/etc/letsencrypt
+      - certbot-var:/var/lib/letsencrypt
+      - ./output:/usr/share/nginx/html/output
+    command: certonly --webroot --webroot-path=/usr/share/nginx/html/output --email your-email@example.com --agree-tos --no-eff-email -d ваш-домен.com
+    depends_on:
+      - nginx
 
 volumes:
-  pgdata:
+  certbot-etc:
+  certbot-var:

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from aiohttp import web
 from config.config import bot, dp
 from handlers import general, text_file_audio, final
 from middlewares.middlewares import GeneralMiddleware
@@ -7,26 +8,68 @@ from keyboards.set_menu import set_main_menu
 
 logging.basicConfig(level=logging.INFO)
 
-async def main():
+# Конфигурация webhook
+WEBHOOK_HOST = "https://boompiai.ru"
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+
+# Порт для веб-сервера (тот же, что в docker-compose)
+WEBAPP_HOST = "0.0.0.0"
+WEBAPP_PORT = 8080
+
+async def on_startup():
+    """Действия при запуске бота"""
     logging.info("Starting bot initialization")
     try:
         await set_main_menu()
         logging.info("Main menu set")
 
-        dp.message.middleware(GeneralMiddleware())
-        dp.include_router(general.rt)
-        dp.include_router(text_file_audio.rt)
-        dp.include_router(final.rt)
-        logging.info("Routers included")
-
-        await bot.delete_webhook(drop_pending_updates=True)
-        logging.info("Webhook deleted, starting polling")
-
-        await dp.start_polling(bot)
-        logging.info("Polling started")
+        # Устанавливаем webhook
+        await bot.set_webhook(
+            url=WEBHOOK_URL,
+            drop_pending_updates=True,
+            allowed_updates=dp.resolve_used_update_types()
+        )
+        logging.info(f"Webhook set to {WEBHOOK_URL}")
 
     except Exception as e:
-        logging.error(f"Error in main: {e}")
+        logging.error(f"Error in startup: {e}")
+
+async def on_shutdown():
+    """Действия при остановке бота"""
+    logging.info("Shutting down bot")
+    await bot.delete_webhook()
+    await bot.session.close()
+
+def main():
+    # Регистрируем middleware и роутеры
+    dp.message.middleware(GeneralMiddleware())
+    dp.include_router(general.rt)
+    dp.include_router(text_file_audio.rt)
+    dp.include_router(final.rt)
+    logging.info("Routers included")
+
+    # Регистрируем startup и shutdown функции
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
+    # Создаем aiohttp приложение
+    app = web.Application()
+
+    # Регистрируем webhook handler от aiogram
+    from aiogram.webhook.aiohttp_server import SimpleRequestHandler
+    webhook_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+    webhook_handler.register(app, path=WEBHOOK_PATH)
+
+    # Опционально: health check endpoint
+    async def health_check(request):
+        return web.Response(text="OK")
+
+    app.router.add_get("/health", health_check)
+
+    # Запускаем веб-сервер
+    logging.info(f"Starting webhook server on {WEBAPP_HOST}:{WEBAPP_PORT}")
+    web.run_app(app, host=WEBAPP_HOST, port=WEBAPP_PORT)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
