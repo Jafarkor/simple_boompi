@@ -126,7 +126,6 @@ async def process_content(msg: Message, content: str, image_path: str = None):
     if USE_STREAM:
         await handle_streaming_response(msg, response, content)
     else:
-        await save_context(msg.from_user.id, content, response)
         await send_response(msg, response)
 
 
@@ -202,21 +201,23 @@ async def document_handler(msg: Message):
 @rt.message(F.photo)
 async def photo_handler(msg: Message):
     """Обработчик фотографий"""
-    try:
-        if not await check_subscription(msg):
-            return
 
-        file = await msg.bot.get_file(msg.photo[-1].file_id)
-        file_path = f'documents/{file.file_path.split("/")[1]}'
-        await msg.bot.download_file(file.file_path, file_path)
+    await msg.answer("БумпИИ не понимает изображения. Отправьте запрос текстом.")
+    # try:
+    #     if not await check_subscription(msg):
+    #         return
 
-        content = msg.caption or "Реши если это задача или опиши что на изображении, учитывай контекст"
-        await process_content(msg, content, image_path=file_path)
+    #     file = await msg.bot.get_file(msg.photo[-1].file_id)
+    #     file_path = f'documents/{file.file_path.split("/")[1]}'
+    #     await msg.bot.download_file(file.file_path, file_path)
 
-        os.remove(file_path)
-    except Exception as e:
-        logging.error(f"Error processing photo: {e}")
-        await msg.answer("Произошла ошибка при обработке изображения.")
+    #     content = msg.caption or "Реши если это задача или опиши что на изображении, учитывай контекст"
+    #     await process_content(msg, content, image_path=file_path)
+
+    #     os.remove(file_path)
+    # except Exception as e:
+    #     logging.error(f"Error processing photo: {e}")
+    #     await msg.answer("Произошла ошибка при обработке изображения.")
 
 
 @rt.callback_query(lambda c: c.data == "check_subscription")

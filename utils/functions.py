@@ -10,6 +10,7 @@ from config.config import redis, client, MAX_CONTEXT_MESSAGES, SYSTEM_PROMPT, MO
 import logging
 import re
 import os
+from html import escape
 
 
 logging.basicConfig(level=logging.INFO)
@@ -61,11 +62,14 @@ def is_simple_response(text: str) -> bool:
 
 
 def markdown_to_telegram_html(text: str) -> str:
+    # Экранируем спецсимволы HTML в начале
+    text = escape(text)
+
     # Горизонтальная линия (---) — преобразуем в разделитель
     text = re.sub(r'^\s*---\s*$', r'──────────────────', text, flags=re.MULTILINE)
 
     # Цитаты (> text) — обрабатываем первыми, чтобы избежать конфликтов
-    text = re.sub(r'(^|\n|\s*)>\s*(?:"|\'|<<)?(.*?)(?:"|\'|>>)?(?=\n|$)', r'\1<blockquote>\2</blockquote>', text, flags=re.MULTILINE)
+    text = re.sub(r'(^|\n|\s*)&gt;\s*(?:&quot;|&#x27;|&lt;&lt;)?(.*?)(?:&quot;|&#x27;|&gt;&gt;)?(?=\n|$)', r'\1<blockquote>\2</blockquote>', text, flags=re.MULTILINE)
 
     # Заголовки (#, ##, ### и т.д.) — преобразуем в жирный текст
     text = re.sub(r'^(#+)\s*(.*?)\s*$', r'<b>\2</b>', text, flags=re.MULTILINE)
@@ -91,9 +95,48 @@ def markdown_to_telegram_html(text: str) -> str:
     # Многострочный код (```text```)
     text = re.sub(r'```(?:\w*\n)?(.*?)```', r'<pre>\1</pre>', text, flags=re.DOTALL)
 
-    # Очистка некорректных вложенных тегов (например, <b><blockquote>)
+    # Очистка некорректных вложенных тегов
     text = re.sub(r'<b>(<blockquote>.*?</blockquote>)</b>', r'\1', text)
     text = re.sub(r'<b>(<pre>.*?</pre>)</b>', r'\1', text)
+
+    # Валидация и исправление HTML
+    def validate_and_fix(html: str) -> str:
+        allowed = {'b', 'i', 'u', 's', 'code', 'pre', 'a', 'blockquote'}
+        stack = []
+        result = []
+
+        parts = re.split(r'(</?[^>]+>)', html)
+
+        for part in parts:
+            if not part:
+                continue
+
+            if match := re.match(r'<(\w+)(?:\s[^>]*)?>$', part):
+                tag = match.group(1)
+                if tag in allowed:
+                    stack.append(tag)
+                    result.append(part)
+
+            elif match := re.match(r'</(\w+)>$', part):
+                tag = match.group(1)
+                if tag in allowed and stack and stack[-1] == tag:
+                    stack.pop()
+                    result.append(part)
+                elif tag in allowed and tag in stack:
+                    while stack and stack[-1] != tag:
+                        result.append(f'</{stack.pop()}>')
+                    if stack:
+                        stack.pop()
+                        result.append(part)
+            else:
+                result.append(part)
+
+        while stack:
+            result.append(f'</{stack.pop()}>')
+
+        return ''.join(result)
+
+    text = validate_and_fix(text)
 
     return text
 
@@ -106,8 +149,8 @@ async def format_datetime(dt: datetime) -> str:
         return f"Ошибка форматирования: {e}"
 
 
-async def save_context(user_id: int, question: list, answer: str):
-    if not (isinstance(question, list) and question and isinstance(answer, str) and answer.strip()):
+async def save_context(user_id: int, question: str, answer: str):
+    if isinstance(question, str) and question and isinstance(answer, str) and answer.strip():
         logging.warning(f"Skipping invalid context for user {user_id}: question={question}, answer={answer}")
         return
     context_entry = {"question": question, "answer": answer}
@@ -143,8 +186,6 @@ async def process_request(telegram_id: str, content: str = "Реши", image_pat
 
 
     for context in reversed(context_list):
-        if len(context["question"]) == 2 and context["question"][1]["type"] == "image_url":
-            break
         messages.append({"role": "user", "content": context["question"]})
         messages.append({"role": "assistant", "content": context["answer"]})
 
@@ -165,7 +206,7 @@ async def process_request(telegram_id: str, content: str = "Реши", image_pat
         response = await client.chat.completions.create(
             messages=messages,
             model=MODEL_NAME,
-            max_tokens=700,
+            max_completion_tokens=1000,
             stream=True,
             stream_options={"include_usage": True}
         )
