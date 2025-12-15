@@ -38,7 +38,7 @@ services:
       - certbot-etc:/etc/letsencrypt
       - certbot-var:/var/lib/letsencrypt
       - ./output:/usr/share/nginx/html/output
-    command: certonly --webroot --webroot-path=/usr/share/nginx/html/output --email your-email@example.com --agree-tos --no-eff-email -d ваш-домен.com
+    command: certonly --webroot --webroot-path=/usr/share/nginx/html/output --email korjafar@gmail.com --agree-tos --no-eff-email -d boompiai.ru
     depends_on:
       - nginx
 
