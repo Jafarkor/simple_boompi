@@ -30,7 +30,7 @@ TIME_STREAM_UPDATE = 1
 USE_STREAM = True
 IMAGE_COST = 10
 
-MODEL_NAME = "gpt-5.1"
+MODEL_NAME = "qwen/qwen3-235b-a22b:free"
 FREE_MODEL_NAME = "accounts/fireworks/models/deepseek-v3-0324"
 
 
@@ -67,8 +67,9 @@ http_client = httpx.AsyncClient(proxy=proxy_url)
 
 # Инициализация клиента OpenAI
 client = AsyncOpenAI(
-    api_key=NEURO_API_KEY,
-    http_client=http_client
+    base_url="https://openrouter.ai/api/v1",
+    api_key=FREE_API_KEY,
+    # http_client=http_client
 )
 
 free_client = AsyncOpenAI(
