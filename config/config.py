@@ -27,10 +27,10 @@ SUPPORT_USERNAME = "@boompi_ai_support"
 MAX_WORD_COUNT = 700  # Максимум слов для обработки
 MAX_CONTEXT_MESSAGES = 3
 TIME_STREAM_UPDATE = 1
-USE_STREAM = False
+USE_STREAM = True
 IMAGE_COST = 10
 
-MODEL_NAME = "qwen/qwen3-235b-a22b:free"
+MODEL_NAME = "gpt-5.1"
 FREE_MODEL_NAME = "accounts/fireworks/models/deepseek-v3-0324"
 
 
@@ -40,8 +40,8 @@ SYSTEM_PROMPT = r"""
 Форматируй все ответы в Markdown.
 
 Стиль ответа:
-	•	Отвечай коротко, информативно и по делу.
-	•	Избегай воды и лишних пояснений.
+	•	Отвечай очень коротко, информативно и по делу!
+	•	Избегай воды и лишних пояснений!
 	•	Давай подробные и развёрнутые ответы только тогда, когда пользователь прямо просит об этом (например: объяснение сложной задачи, сочинение, подробный разбор).
 
 Формулы:
@@ -67,9 +67,8 @@ http_client = httpx.AsyncClient(proxy=proxy_url)
 
 # Инициализация клиента OpenAI
 client = AsyncOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=FREE_API_KEY,
-    # http_client=http_client
+    api_key=NEURO_API_KEY,
+    http_client=http_client
 )
 
 free_client = AsyncOpenAI(
