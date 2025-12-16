@@ -3,6 +3,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage, Redis
 from openai import AsyncOpenAI
+import httpx
 
 
 env = Env()
@@ -58,11 +59,16 @@ E = mc², a² + b² = c², v = s / t, x = (−b ± √(b² − 4ac)) / 2a
 
 NEURO_API_KEY = env('NEURO_API_KEY')
 FREE_API_KEY = env('FREE_API_KEY')
+PROXY = env('PROXY')
 
+# Настройка прокси
+proxy_url = f"http://{PROXY}"
+http_client = httpx.AsyncClient(proxy=proxy_url)
 
 # Инициализация клиента OpenAI
 client = AsyncOpenAI(
-    api_key=NEURO_API_KEY
+    api_key=NEURO_API_KEY,
+    http_client=http_client
 )
 
 free_client = AsyncOpenAI(
