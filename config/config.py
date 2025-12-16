@@ -30,7 +30,7 @@ TIME_STREAM_UPDATE = 1
 USE_STREAM = True
 IMAGE_COST = 10
 
-MODEL_NAME = "gpt-5-nano"
+MODEL_NAME = "gpt-5.1"
 FREE_MODEL_NAME = "accounts/fireworks/models/deepseek-v3-0324"
 
 
