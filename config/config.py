@@ -27,7 +27,7 @@ SUPPORT_USERNAME = "@boompi_ai_support"
 MAX_WORD_COUNT = 700  # Максимум слов для обработки
 MAX_CONTEXT_MESSAGES = 3
 TIME_STREAM_UPDATE = 1
-USE_STREAM = True
+USE_STREAM = False
 IMAGE_COST = 10
 
 MODEL_NAME = "qwen/qwen3-235b-a22b:free"
