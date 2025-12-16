@@ -25,7 +25,7 @@ async def on_startup(app):
         logging.info("Main menu set")
 
         # Даем время nginx и сертификатам подняться
-        await asyncio.sleep(10)
+        await asyncio.sleep(5)
 
         # Сначала проверяем текущий webhook
         webhook_info = await bot.get_webhook_info()
@@ -36,7 +36,7 @@ async def on_startup(app):
             await bot.delete_webhook(drop_pending_updates=True)
             logging.info("Old webhook deleted")
 
-            await asyncio.sleep(4)
+            await asyncio.sleep(2)
 
             # Устанавливаем новый webhook
             result = await bot.set_webhook(
