@@ -150,33 +150,58 @@ async def format_datetime(dt: datetime) -> str:
 
 
 async def save_context(user_id: int, question: str, answer: str):
-    if isinstance(question, str) and question and isinstance(answer, str) and answer.strip():
-        logging.warning(f"Skipping invalid context for user {user_id}: question={question}, answer={answer}")
+    """Сохраняет контекст диалога в Redis"""
+    # Проверяем, что question и answer - строки и не пустые
+    if not isinstance(question, str) or not question.strip():
+        logging.warning(f"Invalid question for user {user_id}: {question}")
         return
+
+    if not isinstance(answer, str) or not answer.strip():
+        logging.warning(f"Invalid answer for user {user_id}: {answer}")
+        return
+
+    # Если question - это список (content с изображением), преобразуем в строку
+    if isinstance(question, list):
+        # Извлекаем текст из списка content
+        text_parts = [item.get("text", "") for item in question if isinstance(item, dict) and item.get("type") == "text"]
+        question = " ".join(text_parts).strip()
+        if not question:
+            logging.warning(f"Empty question after list processing for user {user_id}")
+            return
+
     context_entry = {"question": question, "answer": answer}
     key = f"user:{user_id}:context"
-    await redis.lpush(key, json.dumps(context_entry))
+    await redis.lpush(key, json.dumps(context_entry, ensure_ascii=False))
     await redis.ltrim(key, 0, MAX_CONTEXT_MESSAGES - 1)
     await redis.expire(key, 86400)
+    logging.info(f"Context saved for user {user_id}")
 
 
 async def get_context(user_id: int) -> list:
+    """Получает контекст диалога из Redis"""
     key = f"user:{user_id}:context"
     context_json_list = await redis.lrange(key, 0, -1)
+
     if not context_json_list:
         return []
+
     valid_context = []
     for entry in context_json_list:
         try:
             context = json.loads(entry.decode('utf-8'))
-            # Проверяем, что question и answer - строки и не пустые/None
-            if (isinstance(context.get("question"), list) and context["question"] and
-                isinstance(context.get("answer"), str) and context["answer"].strip()):
+
+            # Проверяем, что question и answer - строки и не пустые
+            question = context.get("question")
+            answer = context.get("answer")
+
+            if isinstance(question, str) and question.strip() and isinstance(answer, str) and answer.strip():
                 valid_context.append(context)
             else:
-                logging.warning(f"Invalid context entry for user {user_id}: {context}")
+                logging.warning(f"Invalid context entry for user {user_id}: question type={type(question)}, answer type={type(answer)}")
+
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             logging.error(f"Failed to decode context for user {user_id}: {e}")
+
     return valid_context
 
 
