@@ -68,8 +68,9 @@ def markdown_to_telegram_html(text: str) -> str:
     # Горизонтальная линия (---) — преобразуем в разделитель
     text = re.sub(r'^\s*---\s*$', r'──────────────────', text, flags=re.MULTILINE)
 
-    # Цитаты (> text) — обрабатываем первыми, чтобы избежать конфликтов
-    text = re.sub(r'(^|\n|\s*)&gt;\s*(?:&quot;|&#x27;|&lt;&lt;)?(.*?)(?:&quot;|&#x27;|&gt;&gt;)?(?=\n|$)', r'\1<blockquote>\2</blockquote>', text, flags=re.MULTILINE)
+    # Цитаты (>>> text) — обрабатываем первыми, чтобы избежать конфликтов
+    # Ищем &gt;&gt;&gt; (это >>> после экранирования)
+    text = re.sub(r'(^|\n)\s*&gt;&gt;&gt;\s*(.*?)(?=\n|$)', r'\1<blockquote>\2</blockquote>', text, flags=re.MULTILINE)
 
     # Заголовки (#, ##, ### и т.д.) — преобразуем в жирный текст
     text = re.sub(r'^(#+)\s*(.*?)\s*$', r'<b>\2</b>', text, flags=re.MULTILINE)

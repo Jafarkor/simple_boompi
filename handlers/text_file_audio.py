@@ -9,7 +9,7 @@ from aiogram.enums.chat_member_status import ChatMemberStatus
 from pathlib import Path
 import os
 import asyncio
-from config.config import MAX_WORD_COUNT, CHANNEL_USERNAME, USE_STREAM
+from config.config import MAX_WORD_COUNT, CHANNEL_USERNAME, USE_STREAM, TIME_STREAM_UPDATE
 import logging
 import aiofiles
 
@@ -56,9 +56,9 @@ async def handle_streaming_response(msg: Message, stream_response, content: str)
     buffer = ""
     message = None
 
-    MIN_UPDATE_INTERVAL = 0.8
-    MIN_CHUNK_SIZE = 50
-    MAX_CHUNK_SIZE = 150
+    MIN_UPDATE_INTERVAL = TIME_STREAM_UPDATE
+    MIN_CHUNK_SIZE = 100
+    MAX_CHUNK_SIZE = 200
 
     last_update_time = asyncio.get_event_loop().time() - MIN_UPDATE_INTERVAL
 

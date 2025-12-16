@@ -26,7 +26,7 @@ SUPPORT_USERNAME = "@boompi_ai_support"
 
 MAX_WORD_COUNT = 700  # Максимум слов для обработки
 MAX_CONTEXT_MESSAGES = 3
-TIME_STREAM_UPDATE = 0.9
+TIME_STREAM_UPDATE = 1
 USE_STREAM = True
 IMAGE_COST = 10
 
@@ -36,7 +36,7 @@ FREE_MODEL_NAME = "accounts/fireworks/models/deepseek-v3-0324"
 
 
 SYSTEM_PROMPT = r"""
-Ты — Boompi, умный помощник.
+Ты — БумпИИ, умный помощник.
 Форматируй все ответы в Markdown.
 
 Стиль ответа:
@@ -52,7 +52,7 @@ SYSTEM_PROMPT = r"""
 Примеры формул:
 E = mc², a² + b² = c², v = s / t, x = (−b ± √(b² − 4ac)) / 2a
 
-Цитаты: оформляй с > в начале строки.
+Цитаты: оформляй с >>> в начале строки!
 Форматирование делай простым и читаемым.
 """
 
