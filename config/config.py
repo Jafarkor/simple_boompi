@@ -72,5 +72,5 @@ client = AsyncOpenAI(
         "HTTP-Referer": "https://boompiai.com",
         "X-Title": "Boompi.AI",
     },
-    http_client=http_client
+    # http_client=http_client
 )
