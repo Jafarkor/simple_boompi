@@ -4,6 +4,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage, Redis
 from openai import AsyncOpenAI
 import httpx
+import logging
 
 
 env = Env()
@@ -58,6 +59,8 @@ E = mc², a² + b² = c², v = s / t, x = (−b ± √(b² − 4ac)) / 2a
 
 
 NEURO_API_KEY = env.str('NEURO_API_KEY')
+logging.info(NEURO_API_KEY)
+
 PROXY = env('PROXY')
 
 # Настройка прокси
@@ -68,9 +71,9 @@ http_client = httpx.AsyncClient(proxy=proxy_url)
 client = AsyncOpenAI(
     base_url='https://openrouter.ai/api/v1',
     api_key=NEURO_API_KEY,
-    # default_headers={
-    #     "HTTP-Referer": "https://boompiai.com",
-    #     "X-Title": "Boompi.AI",
-    # },
+    default_headers={
+        "HTTP-Referer": "https://boompiai.com",
+        "X-Title": "Boompi.AI",
+    },
     # http_client=http_client
 )
