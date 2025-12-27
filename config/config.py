@@ -3,7 +3,6 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage, Redis
 from openai import AsyncOpenAI
-import logging
 
 
 env = Env()
@@ -57,7 +56,6 @@ E = mc², a² + b² = c², v = s / t, x = (−b ± √(b² − 4ac)) / 2a
 
 
 NEURO_API_KEY = env.str('NEURO_API_KEY')
-logging.info(NEURO_API_KEY)
 
 # PROXY = env('PROXY')
 
