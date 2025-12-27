@@ -3,7 +3,6 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage, Redis
 from openai import AsyncOpenAI
-import httpx
 import logging
 
 
@@ -32,7 +31,6 @@ USE_STREAM = True
 IMAGE_COST = 10
 
 MODEL_NAME = "google/gemini-3-flash-preview"
-FREE_MODEL_NAME = "accounts/fireworks/models/deepseek-v3-0324"
 
 
 
@@ -59,18 +57,16 @@ E = mc², a² + b² = c², v = s / t, x = (−b ± √(b² − 4ac)) / 2a
 
 
 NEURO_API_KEY = env.str('NEURO_API_KEY')
-print("DEBUG KEY:", repr(NEURO_API_KEY))
 logging.info(NEURO_API_KEY)
 
-PROXY = env('PROXY')
+# PROXY = env('PROXY')
 
 # Настройка прокси
-proxy_url = f"http://{PROXY}"
-http_client = httpx.AsyncClient(proxy=proxy_url)
+# proxy_url = f"http://{PROXY}"
+# http_client = httpx.AsyncClient(proxy=proxy_url)
 
 # Инициализация клиента OpenAI
 client = AsyncOpenAI(
     base_url='https://openrouter.ai/api/v1',
-    api_key=NEURO_API_KEY,
-    # http_client=http_client
+    api_key=NEURO_API_KEY
 )
