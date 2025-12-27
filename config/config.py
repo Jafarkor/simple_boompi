@@ -58,7 +58,6 @@ E = mc², a² + b² = c², v = s / t, x = (−b ± √(b² − 4ac)) / 2a
 
 
 NEURO_API_KEY = env('NEURO_API_KEY')
-FREE_API_KEY = env('FREE_API_KEY')
 PROXY = env('PROXY')
 
 # Настройка прокси
@@ -68,11 +67,6 @@ http_client = httpx.AsyncClient(proxy=proxy_url)
 # Инициализация клиента OpenAI
 client = AsyncOpenAI(
     base_url='https://openrouter.ai/api/v1',
-    api_key=FREE_API_KEY,
+    api_key=NEURO_API_KEY,
     # http_client=http_client
 )
-
-# free_client = AsyncOpenAI(
-#     base_url="https://api.fireworks.ai/inference/v1",
-#     api_key=FREE_API_KEY
-# )
