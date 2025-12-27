@@ -68,5 +68,9 @@ http_client = httpx.AsyncClient(proxy=proxy_url)
 client = AsyncOpenAI(
     base_url='https://openrouter.ai/api/v1',
     api_key=NEURO_API_KEY,
+    default_headers={
+        "HTTP-Referer": "https://boompiai.com",
+        "X-Title": "Boompi.AI",
+    },
     # http_client=http_client
 )
