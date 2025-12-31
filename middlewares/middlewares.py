@@ -24,6 +24,6 @@ class GeneralMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         except Exception as e:
-            print(e)
+            logging.error(e)
 
         return
