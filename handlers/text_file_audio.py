@@ -211,6 +211,9 @@ async def photo_handler(msg: Message):
         if not await check_subscription(msg):
             return
 
+        # Создаем директорию если не существует
+        os.makedirs('documents', exist_ok=True)
+
         # Получаем media_group_id для определения альбома
         media_group_id = msg.media_group_id
 
@@ -256,6 +259,7 @@ async def photo_handler(msg: Message):
                         caption = photo_data['caption']
 
                     file = await msg.bot.get_file(file_id)
+                    # Используем file_id для уникального имени файла
                     file_path = f'documents/{file_id}.jpg'
                     await msg.bot.download_file(file.file_path, file_path)
                     image_paths.append(file_path)
@@ -276,7 +280,8 @@ async def photo_handler(msg: Message):
         else:
             # Одиночное фото
             file = await msg.bot.get_file(msg.photo[-1].file_id)
-            file_path = f'documents/{file.file_path.split("/")[1]}'
+            # Используем file_id для создания уникального имени файла
+            file_path = f'documents/{msg.photo[-1].file_id}.jpg'
             await msg.bot.download_file(file.file_path, file_path)
 
             content = msg.caption or "Опиши что на изображении. Если есть текст или задача - извлеки его полностью."
