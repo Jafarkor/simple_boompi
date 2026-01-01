@@ -232,7 +232,7 @@ async def process_request(telegram_id: str, content: str = "Реши", image_pat
         response = await client.chat.completions.create(
             messages=messages,
             model=MODEL_NAME,
-            max_completion_tokens=1000,
+            max_completion_tokens=1100,
             stream=True,
             stream_options={"include_usage": True}
         )
@@ -243,7 +243,7 @@ async def process_request(telegram_id: str, content: str = "Реши", image_pat
         response = await client.chat.completions.create(
             messages=messages,
             model=MODEL_NAME,
-            max_tokens=1000,
+            max_tokens=1100,
         )
 
         response_dict = json.loads(response.model_dump_json())
