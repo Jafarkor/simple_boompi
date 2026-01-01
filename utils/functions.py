@@ -234,7 +234,8 @@ async def process_request(telegram_id: str, content: str = "Реши", image_pat
             model=MODEL_NAME,
             max_completion_tokens=1000,
             stream=True,
-            stream_options={"include_usage": True}
+            stream_options={"include_usage": True},
+            service_tier="priority"
         )
         return response
 
