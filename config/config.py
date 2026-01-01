@@ -22,13 +22,18 @@ BOT_USERNAME = '@boompi_ai_bot'
 SUPPORT_USERNAME = "@boompi_ai_support"
 
 
-MAX_WORD_COUNT = 1000  # Максимум слов для обработки
+MAX_WORD_COUNT = 1000
 MAX_CONTEXT_MESSAGES = 5
 TIME_STREAM_UPDATE = 1
 USE_STREAM = True
 
 MODEL_NAME = "gpt-5.2-chat-latest"
+VISION_MODEL_NAME = "meta-llama/llama-4-maverick-17b-128e-instruct"
 
+# Ограничения для изображений
+MAX_IMAGES_PER_REQUEST = 5
+MAX_IMAGE_SIZE_MB = 4  # для base64
+MAX_IMAGE_RESOLUTION_MP = 33  # мегапикселей
 
 
 SYSTEM_PROMPT = r"""
@@ -53,15 +58,30 @@ E = mc², a² + b² = c², v = s / t, x = (−b ± √(b² − 4ac)) / 2a
 """
 
 
+VISION_SYSTEM_PROMPT = r"""
+Ты помощник для анализа изображений. Твоя задача:
+1. Если на изображении есть текст или задача - извлеки его полностью и точно
+2. Если это обычное изображение - опиши что на нём изображено детально
+3. Будь точным и информативным
+"""
+
+
 NEURO_API_KEY = env('NEURO_API_KEY')
+GROQ_API_KEY = env('GROQ_API_KEY')
 PROXY = env('PROXY')
 
-# Настройка прокси
+# Настройка прокси для основного клиента
 proxy_url = f"http://{PROXY}"
 http_client = httpx.AsyncClient(proxy=proxy_url)
 
-# Инициализация клиента OpenAI
+# Основной клиент OpenAI
 client = AsyncOpenAI(
     api_key=NEURO_API_KEY,
     http_client=http_client
+)
+
+# Клиент Groq для обработки изображений (без прокси, если не требуется)
+vision_client = AsyncOpenAI(
+    base_url="https://api.groq.com/openai/v1",
+    api_key=GROQ_API_KEY
 )

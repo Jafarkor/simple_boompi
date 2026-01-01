@@ -1,6 +1,7 @@
 aiogram==3.12.0
 environs
 redis
+Pillow
 
 python-docx
 PyPDF2
