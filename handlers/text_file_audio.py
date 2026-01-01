@@ -211,76 +211,60 @@ async def photo_handler(msg: Message):
         if not await check_subscription(msg):
             return
 
-        # Создаем директорию если не существует
         os.makedirs('documents', exist_ok=True)
-
-        # Получаем media_group_id для определения альбома
         media_group_id = msg.media_group_id
 
         if media_group_id:
-            # Это часть альбома - сохраняем во временное хранилище
-            key = f"album:{msg.from_user.id}:{media_group_id}"
-
-            # Используем Redis для временного хранения
             from config.config import redis
             import json
 
-            # Сохраняем информацию о фото
-            photo_info = {
-                'file_id': msg.photo[-1].file_id,
-                'caption': msg.caption or ""
-            }
+            key = f"album:{msg.from_user.id}:{media_group_id}"
 
-            await redis.lpush(key, json.dumps(photo_info))
-            await redis.expire(key, 10)  # Храним 10 секунд
+            # Сохраняем фото и пытаемся установить блокировку атомарно
+            photo_info = json.dumps({'file_id': msg.photo[-1].file_id, 'caption': msg.caption or ""})
+            await redis.lpush(key, photo_info)
 
-            # Ждем немного, чтобы собрать все фото из альбома
-            await asyncio.sleep(0.5)
+            # Устанавливаем блокировку (NX = только если не существует)
+            lock_set = await redis.set(f"{key}:lock", "1", ex=5, nx=True)
 
-            # Проверяем количество собранных фото
+            if not lock_set:
+                # Блокировка уже установлена другим обработчиком
+                return
+
+            # Ждем остальные фото из альбома
+            await asyncio.sleep(1)
+
             album_data = await redis.lrange(key, 0, -1)
+            await redis.delete(key, f"{key}:lock")
 
             if len(album_data) > MAX_IMAGES_PER_REQUEST:
                 await msg.answer(f"❌ Максимум {MAX_IMAGES_PER_REQUEST} изображений за раз")
-                await redis.delete(key)
                 return
 
-            # Обрабатываем только первое сообщение из альбома
-            album_size = await redis.llen(key)
-            if album_size == len(album_data):
-                # Скачиваем все фото
-                image_paths = []
-                caption = ""
+            image_paths = []
+            caption = ""
 
-                for data in album_data:
-                    photo_data = json.loads(data.decode('utf-8'))
-                    file_id = photo_data['file_id']
-                    if photo_data['caption']:
-                        caption = photo_data['caption']
+            for data in album_data:
+                photo_data = json.loads(data.decode('utf-8'))
+                if photo_data['caption']:
+                    caption = photo_data['caption']
 
-                    file = await msg.bot.get_file(file_id)
-                    # Используем file_id для уникального имени файла
-                    file_path = f'documents/{file_id}.jpg'
-                    await msg.bot.download_file(file.file_path, file_path)
-                    image_paths.append(file_path)
+                file = await msg.bot.get_file(photo_data['file_id'])
+                file_path = f"documents/{photo_data['file_id']}.jpg"
+                await msg.bot.download_file(file.file_path, file_path)
+                image_paths.append(file_path)
 
-                # Удаляем ключ из Redis
-                await redis.delete(key)
+            content = caption or "Опиши что на изображениях. Если есть текст или задачи - извлеки их."
 
-                # Обрабатываем альбом
-                content = caption or "Опиши что на изображениях. Если есть текст или задачи - извлеки их."
-
-                try:
-                    await process_content(msg, content, image_paths=image_paths)
-                finally:
-                    # Удаляем файлы
-                    for path in image_paths:
-                        if os.path.exists(path):
-                            os.remove(path)
+            try:
+                await process_content(msg, content, image_paths=image_paths)
+            finally:
+                for path in image_paths:
+                    if os.path.exists(path):
+                        os.remove(path)
         else:
             # Одиночное фото
             file = await msg.bot.get_file(msg.photo[-1].file_id)
-            # Используем file_id для создания уникального имени файла
             file_path = f'documents/{msg.photo[-1].file_id}.jpg'
             await msg.bot.download_file(file.file_path, file_path)
 
