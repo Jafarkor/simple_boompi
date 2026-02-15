@@ -68,7 +68,7 @@ async def send_code_file(msg: Message, code_response: str, loader: Message):
             await loader.delete()
             await msg.reply_document(
                 doc,
-                caption='Ваш код готов <tg-emoji emoji-id="5415607860769857239">✅</tg-emoji>'
+                caption='Ваш код готов <tg-emoji emoji-id="5416004883251733192">✅</tg-emoji>'
             )
             os.remove(filepath)
         else:
