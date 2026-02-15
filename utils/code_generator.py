@@ -75,7 +75,7 @@ class CodeGenerator:
 
         name, ext = base.rsplit('.', 1)
         unique_id = str(uuid.uuid4())[:8]
-        return f"{name}_{unique_id}.{ext}"
+        return f"{name}_{unique_id}.{ext}", f"{name}.{ext}"
 
     def create_file(self, code_response: str) -> Optional[Path]:
         """Создает файл с кодом из ответа модели"""
@@ -89,12 +89,12 @@ class CodeGenerator:
             if not language:
                 language = self._detect_language(code)
 
-            filename = self._generate_filename(language)
+            filename, finame = self._generate_filename(language)
             filepath = self.output_dir / filename
             filepath.write_text(code, encoding='utf-8')
 
             logger.info(f"Code file created: {filepath}")
-            return filepath
+            return filepath, finame
 
         except Exception as e:
             logger.error(f"Error creating code file: {e}")
