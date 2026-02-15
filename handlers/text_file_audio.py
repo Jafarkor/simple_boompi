@@ -63,7 +63,7 @@ async def send_code_file(msg: Message, code_response: str):
     try:
         filepath = code_gen.create_file(code_response)
         if filepath:
-            doc = FSInputFile(filepath)
+            doc = FSInputFile(filepath, filename=filepath.split('/')[-1])
             # Отправляем как reply на сообщение пользователя
             await msg.reply_document(
                 doc,
