@@ -19,8 +19,21 @@ import random
 from aiogram.types import ReactionTypeEmoji
 
 POPULAR_EMOJIS = [
-    "👍", "❤️", "🔥", "😍",
-    "👏", "🎉", "😢", "🤔"
+    "👍",
+    "❤️",
+    "🔥",
+    "😍",
+    "🎉",
+    "😢",
+    "🤔",
+    "😡",
+    "😤",
+    "😭",
+    "😢",
+    "😩",
+    "😴",
+    "🤯",
+    "🙄",
 ]
 
 rt = Router()
