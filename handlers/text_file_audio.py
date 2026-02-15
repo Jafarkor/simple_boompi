@@ -59,20 +59,26 @@ async def send_response(msg: Message, answer: str, existing_message=None):
 
 
 async def send_code_file(msg: Message, code_response: str):
-    """Создает и отправляет файл с кодом"""
+    """Создает и отправляет файл с кодом (reply на сообщение пользователя)"""
     try:
         filepath = code_gen.create_file(code_response)
         if filepath:
             doc = FSInputFile(filepath)
-            await msg.answer_document(doc, caption="📄 Сгенерированный код")
+            # Отправляем как reply на сообщение пользователя
+            await msg.reply_document(
+                doc,
+                caption="📄 Сгенерированный код"
+            )
             os.remove(filepath)
         else:
             logging.warning("Could not create code file")
+            await msg.reply("❌ Не удалось создать файл с кодом")
     except Exception as e:
         logging.error(f"Error sending code file: {e}")
+        await msg.reply("❌ Ошибка при создании файла")
 
 
-async def handle_streaming_response(msg: Message, stream_response, content: str, is_code: bool = False):
+async def handle_streaming_response(msg: Message, stream_response, content: str):
     """Обрабатывает потоковый ответ от нейросети"""
     full_response = ""
     buffer = ""
@@ -126,10 +132,6 @@ async def handle_streaming_response(msg: Message, stream_response, content: str,
     await save_context(msg.from_user.id, content, full_response)
     await send_response(msg, full_response, message)
 
-    # Если это код, создаем файл
-    if is_code:
-        await send_code_file(msg, full_response)
-
 
 async def process_content(msg: Message, content: str, image_paths: list[str] = None):
     """Общая функция обработки контента - ОДИН запрос к Groq"""
@@ -148,18 +150,15 @@ async def process_content(msg: Message, content: str, image_paths: list[str] = N
         logger.info(f"User wants {'CODE' if wants_code else 'TEXT'}")
 
         if wants_code:
-            # Генерируем код через основную модель OpenAI
+            # Генерируем код БЕЗ streaming - только файл
             response = await generate_code(
                 telegram_id=msg.from_user.id,
                 request=processed_content,
-                stream=USE_STREAM
+                stream=False  # Всегда False для кода
             )
 
-            if USE_STREAM:
-                await handle_streaming_response(msg, response, processed_content, is_code=True)
-            else:
-                await send_response(msg, response)
-                await send_code_file(msg, response)
+            # Отправляем только файл (reply на сообщение)
+            await send_code_file(msg, response)
         else:
             # Обычная обработка через OpenAI (БЕЗ изображений - они уже обработаны)
             response = await process_request(
@@ -170,7 +169,7 @@ async def process_content(msg: Message, content: str, image_paths: list[str] = N
             )
 
             if USE_STREAM:
-                await handle_streaming_response(msg, response, processed_content, is_code=False)
+                await handle_streaming_response(msg, response, processed_content)
             else:
                 await send_response(msg, response)
 
