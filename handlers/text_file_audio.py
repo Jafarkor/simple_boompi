@@ -67,7 +67,7 @@ async def send_code_file(msg: Message, code_response: str):
             # Отправляем как reply на сообщение пользователя
             await msg.reply_document(
                 doc,
-                caption="📄 Сгенерированный код"
+                caption="Ваш код готов ✅"
             )
             os.remove(filepath)
         else:
