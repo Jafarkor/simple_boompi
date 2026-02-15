@@ -159,8 +159,7 @@ async def process_content(msg: Message, content: str, image_paths: list[str] = N
         logger.info(f"User wants {'CODE' if wants_code else 'TEXT'}")
 
         if wants_code:
-            emoji = ReactionTypeCustomEmoji(custom_emoji_id=random.choice(EMOJIS))
-            await msg.react([emoji])
+            await msg.react([ReactionTypeCustomEmoji(custom_emoji_id="5199468807034253648")])
             loader = await msg.answer('Генерация кода <tg-emoji emoji-id="5350803719170564382">👾</tg-emoji>')
             # Генерируем код БЕЗ streaming - только файл
             response = await generate_code(
