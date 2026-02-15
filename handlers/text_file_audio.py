@@ -64,9 +64,8 @@ async def send_code_file(msg: Message, code_response: str, loader: Message):
         filepath, filename = code_gen.create_file(code_response)
         if filepath:
             doc = FSInputFile(filepath, filename=filename)
-            # Отправляем как reply на сообщение пользователя
             await loader.delete()
-            await msg.reply_document(
+            await msg.answer_document(
                 doc,
                 caption='Ваш код готов <tg-emoji emoji-id="5350486389806868244">✅</tg-emoji>'
             )
@@ -151,7 +150,7 @@ async def process_content(msg: Message, content: str, image_paths: list[str] = N
         logger.info(f"User wants {'CODE' if wants_code else 'TEXT'}")
 
         if wants_code:
-            loader = await msg.reply('Генерация кода <tg-emoji emoji-id="5370935802844946281">👾</tg-emoji>')
+            loader = await msg.answer('Генерация кода <tg-emoji emoji-id="5350803719170564382">👾</tg-emoji>')
             # Генерируем код БЕЗ streaming - только файл
             response = await generate_code(
                 telegram_id=msg.from_user.id,
