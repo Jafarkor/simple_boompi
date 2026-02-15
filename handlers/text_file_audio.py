@@ -58,14 +58,14 @@ async def send_response(msg: Message, answer: str, existing_message=None):
         await msg.answer(html_answer, parse_mode="HTML")
 
 
-async def send_code_file(msg: Message, code_response: str):
+async def send_code_file(msg: Message, code_response: str, loader: Message):
     """Создает и отправляет файл с кодом (reply на сообщение пользователя)"""
     try:
         filepath, filename = code_gen.create_file(code_response)
-        logger.info(filepath)
         if filepath:
             doc = FSInputFile(filepath, filename=filename)
             # Отправляем как reply на сообщение пользователя
+            await loader.delete()
             await msg.reply_document(
                 doc,
                 caption="Ваш код готов ✅"
@@ -151,6 +151,7 @@ async def process_content(msg: Message, content: str, image_paths: list[str] = N
         logger.info(f"User wants {'CODE' if wants_code else 'TEXT'}")
 
         if wants_code:
+            loader = await msg.reply('Генерация кода 👾')
             # Генерируем код БЕЗ streaming - только файл
             response = await generate_code(
                 telegram_id=msg.from_user.id,
@@ -159,7 +160,7 @@ async def process_content(msg: Message, content: str, image_paths: list[str] = N
             )
 
             # Отправляем только файл (reply на сообщение)
-            await send_code_file(msg, response)
+            await send_code_file(msg, response, loader)
         else:
             # Обычная обработка через OpenAI (БЕЗ изображений - они уже обработаны)
             response = await process_request(
