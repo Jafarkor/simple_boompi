@@ -15,6 +15,15 @@ from config.config import (MAX_WORD_COUNT, CHANNEL_USERNAME, USE_STREAM,
                            TIME_STREAM_UPDATE, MAX_IMAGES_PER_REQUEST, groq_client)
 import logging
 import aiofiles
+import random
+from aiogram.types import ReactionTypeCustomEmoji
+
+EMOJIS = [
+    "5199468807034253648", "5352899869369446268", "5339267587337370029",
+    "5352640560718949874", "5323329096845897690", "5339124569221377480",
+    "5217467090826441505", "5197564405650307134", "5197581306346617713",
+    "5422649047334794716", "5197170531379459422", "5341363621572128687"
+]
 
 rt = Router()
 logging.basicConfig(level=logging.INFO)
@@ -150,6 +159,8 @@ async def process_content(msg: Message, content: str, image_paths: list[str] = N
         logger.info(f"User wants {'CODE' if wants_code else 'TEXT'}")
 
         if wants_code:
+            emoji = ReactionTypeCustomEmoji(custom_emoji_id=random.choice(EMOJIS))
+            await msg.react([emoji])
             loader = await msg.answer('Генерация кода <tg-emoji emoji-id="5350803719170564382">👾</tg-emoji>')
             # Генерируем код БЕЗ streaming - только файл
             response = await generate_code(
