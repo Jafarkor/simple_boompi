@@ -224,7 +224,7 @@ async def process_request(telegram_id: str, content: str = "Реши", image_pat
         response = await client.chat.completions.create(
             messages=messages,
             model=MODEL_NAME,
-            max_tokens=1100,
+            max_completion_tokens=1100,
         )
 
         response_dict = json.loads(response.model_dump_json())
@@ -270,13 +270,13 @@ async def generate_code(telegram_id: int, request: str, stream: bool = False):
     """
     context_list = await get_context(telegram_id)
     messages = [{"role": "system", "content": CODE_GENERATION_PROMPT}]
-    
+
     for context in reversed(context_list):
         messages.append({"role": "user", "content": context["question"]})
         messages.append({"role": "assistant", "content": context["answer"]})
-    
+
     messages.append({"role": "user", "content": request})
-    
+
     if stream:
         response = await client.chat.completions.create(
             messages=messages,
@@ -290,9 +290,9 @@ async def generate_code(telegram_id: int, request: str, stream: bool = False):
         response = await client.chat.completions.create(
             messages=messages,
             model=MODEL_NAME,
-            max_tokens=2000,
+            max_completion_tokens=2000,
         )
-        
+
         bot_response = response.choices[0].message.content
         await save_context(telegram_id, request, bot_response)
         return bot_response
