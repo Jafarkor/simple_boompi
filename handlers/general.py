@@ -14,9 +14,6 @@ async def start(msg: Message, state: FSMContext):
     await msg.answer(lexicon['greeting'])
     await state.clear()
 
-@rt.message(Command("help"))
-async def show_help(msg: Message):
-    await msg.answer(lexicon['help'])
 
 @rt.message(Command("support"))
 async def support(msg: Message):

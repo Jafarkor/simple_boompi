@@ -5,9 +5,9 @@ import PyPDF2
 import json
 from datetime import datetime
 import base64
-from config.config import (redis, client, vision_client, MAX_CONTEXT_MESSAGES,
-                           SYSTEM_PROMPT, VISION_SYSTEM_PROMPT, MODEL_NAME,
-                           VISION_MODEL_NAME, MAX_IMAGES_PER_REQUEST,
+from config.config import (redis, client, MAX_CONTEXT_MESSAGES,
+                           SYSTEM_PROMPT, CODE_GENERATION_PROMPT,
+                           MODEL_NAME, MAX_IMAGES_PER_REQUEST,
                            MAX_IMAGE_SIZE_MB, MAX_IMAGE_RESOLUTION_MP)
 import logging
 import re
@@ -49,77 +49,6 @@ async def validate_image(image_path: str) -> tuple[bool, str]:
         return False, f"Ошибка проверки изображения: {str(e)}"
 
 
-async def process_images_with_groq(image_paths: list[str], user_prompt: str = None) -> str:
-    """
-    Обрабатывает изображения через Groq API
-    Возвращает текстовое описание/извлечённый текст
-    """
-    try:
-        if len(image_paths) > MAX_IMAGES_PER_REQUEST:
-            raise ValueError(f"Максимум {MAX_IMAGES_PER_REQUEST} изображений за раз")
-
-        # Валидация всех изображений
-        for img_path in image_paths:
-            is_valid, error_msg = await validate_image(img_path)
-            if not is_valid:
-                raise ValueError(error_msg)
-
-        # Подготовка контента для запроса
-        content = []
-
-        # Добавляем текстовый промпт если есть
-        if user_prompt:
-            content.append({"type": "text", "text": user_prompt})
-        else:
-            default_prompt = "Опиши что на изображении. Если есть текст или задача - извлеки его полностью."
-            content.append({"type": "text", "text": default_prompt})
-
-        # Добавляем изображения
-        for img_path in image_paths:
-            async with aiofiles.open(img_path, "rb") as f:
-                image_data = await f.read()
-
-            img_base64 = base64.b64encode(image_data).decode("utf-8")
-
-            # Определяем MIME-тип
-            ext = img_path.lower().split('.')[-1]
-            mime_mapping = {
-                'jpg': 'image/jpeg',
-                'jpeg': 'image/jpeg',
-                'png': 'image/png',
-                'webp': 'image/webp',
-                'gif': 'image/gif'
-            }
-            mime_type = mime_mapping.get(ext, 'image/jpeg')
-
-            content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{mime_type};base64,{img_base64}"
-                }
-            })
-
-        # Запрос к Groq API
-        messages = [
-            {"role": "system", "content": VISION_SYSTEM_PROMPT},
-            {"role": "user", "content": content}
-        ]
-
-        response = await vision_client.chat.completions.create(
-            model=VISION_MODEL_NAME,
-            messages=messages,
-            max_tokens=2000,
-            temperature=0.3
-        )
-
-        vision_result = response.choices[0].message.content
-        logging.info(f"Groq vision response: {vision_result[:100]}...")
-
-        return vision_result
-
-    except Exception as e:
-        logging.error(f"Ошибка при обработке изображений через Groq: {e}")
-        raise
 
 
 async def process_audio_with_whisper(telegram_id, file_path: str) -> str:
@@ -269,7 +198,8 @@ async def get_context(user_id: int) -> list:
 
 async def process_request(telegram_id: str, content: str = "Реши", image_paths: list[str] = None, stream: bool = False):
     """
-    Обработка запроса с поддержкой изображений через Groq
+    Обработка запроса через OpenAI
+    ВАЖНО: image_paths больше НЕ используется здесь - изображения обрабатываются в UniversalAnalyzer
     """
     context_list = await get_context(telegram_id)
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -278,21 +208,7 @@ async def process_request(telegram_id: str, content: str = "Реши", image_pat
         messages.append({"role": "user", "content": context["question"]})
         messages.append({"role": "assistant", "content": context["answer"]})
 
-    # Если есть изображения, сначала обрабатываем их через Groq
-    if image_paths:
-        try:
-            vision_result = await process_images_with_groq(image_paths, content)
-
-            # Формируем новый промпт с результатом анализа изображений
-            enhanced_content = f"{content}\n\nИнформация с изображения:\n{vision_result}"
-            user_message = {"role": "user", "content": enhanced_content}
-
-        except Exception as e:
-            logging.error(f"Ошибка обработки изображений: {e}")
-            raise
-    else:
-        user_message = {"role": "user", "content": content}
-
+    user_message = {"role": "user", "content": content}
     messages.append(user_message)
 
     if stream:
@@ -346,3 +262,37 @@ async def read_txt(file_path):
     async with aiofiles.open(file_path, "r", encoding="utf-8") as file:
         text = await file.read()
     return text
+
+
+async def generate_code(telegram_id: int, request: str, stream: bool = False):
+    """
+    Генерирует код через основную модель OpenAI
+    """
+    context_list = await get_context(telegram_id)
+    messages = [{"role": "system", "content": CODE_GENERATION_PROMPT}]
+    
+    for context in reversed(context_list):
+        messages.append({"role": "user", "content": context["question"]})
+        messages.append({"role": "assistant", "content": context["answer"]})
+    
+    messages.append({"role": "user", "content": request})
+    
+    if stream:
+        response = await client.chat.completions.create(
+            messages=messages,
+            model=MODEL_NAME,
+            max_completion_tokens=2000,
+            stream=True,
+            stream_options={"include_usage": True}
+        )
+        return response
+    else:
+        response = await client.chat.completions.create(
+            messages=messages,
+            model=MODEL_NAME,
+            max_tokens=2000,
+        )
+        
+        bot_response = response.choices[0].message.content
+        await save_context(telegram_id, request, bot_response)
+        return bot_response

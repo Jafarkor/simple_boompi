@@ -1,20 +1,28 @@
 from utils.functions import (read_pdf, read_docx, read_txt, process_request,
                              markdown_to_telegram_html, process_audio_with_whisper,
-                             save_context)
+                             save_context, generate_code)
+from utils.universal_analyzer import UniversalAnalyzer
+from utils.code_generator import CodeGenerator
 from lexicon.lexicon import LEXICON_RU as lexicon
 from keyboards.keyboards import channel_subscription_keyboard
 from aiogram import F, Router
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.enums.chat_member_status import ChatMemberStatus
 from pathlib import Path
 import os
 import asyncio
-from config.config import MAX_WORD_COUNT, CHANNEL_USERNAME, USE_STREAM, TIME_STREAM_UPDATE, MAX_IMAGES_PER_REQUEST
+from config.config import (MAX_WORD_COUNT, CHANNEL_USERNAME, USE_STREAM,
+                           TIME_STREAM_UPDATE, MAX_IMAGES_PER_REQUEST, groq_client)
 import logging
 import aiofiles
 
 rt = Router()
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Инициализируем универсальный анализатор и генератор кода
+analyzer = UniversalAnalyzer(groq_client)
+code_gen = CodeGenerator()
 
 
 async def is_subscribed(user_id: int, bot) -> bool:
@@ -50,7 +58,21 @@ async def send_response(msg: Message, answer: str, existing_message=None):
         await msg.answer(html_answer, parse_mode="HTML")
 
 
-async def handle_streaming_response(msg: Message, stream_response, content: str):
+async def send_code_file(msg: Message, code_response: str):
+    """Создает и отправляет файл с кодом"""
+    try:
+        filepath = code_gen.create_file(code_response)
+        if filepath:
+            doc = FSInputFile(filepath)
+            await msg.answer_document(doc, caption="📄 Сгенерированный код")
+            os.remove(filepath)
+        else:
+            logging.warning("Could not create code file")
+    except Exception as e:
+        logging.error(f"Error sending code file: {e}")
+
+
+async def handle_streaming_response(msg: Message, stream_response, content: str, is_code: bool = False):
     """Обрабатывает потоковый ответ от нейросети"""
     full_response = ""
     buffer = ""
@@ -104,9 +126,13 @@ async def handle_streaming_response(msg: Message, stream_response, content: str)
     await save_context(msg.from_user.id, content, full_response)
     await send_response(msg, full_response, message)
 
+    # Если это код, создаем файл
+    if is_code:
+        await send_code_file(msg, full_response)
+
 
 async def process_content(msg: Message, content: str, image_paths: list[str] = None):
-    """Общая функция обработки контента"""
+    """Общая функция обработки контента - ОДИН запрос к Groq"""
     if not await check_subscription(msg):
         return
 
@@ -116,20 +142,39 @@ async def process_content(msg: Message, content: str, image_paths: list[str] = N
         return
 
     try:
-        response = await process_request(
-            telegram_id=msg.from_user.id,
-            image_paths=image_paths,
-            content=content,
-            stream=USE_STREAM
-        )
+        # ОДИН запрос к Groq: анализ текста + изображений + определение намерения
+        wants_code, processed_content = await analyzer.analyze(content, image_paths)
 
-        if USE_STREAM:
-            await handle_streaming_response(msg, response, content)
+        logger.info(f"User wants {'CODE' if wants_code else 'TEXT'}")
+
+        if wants_code:
+            # Генерируем код через основную модель OpenAI
+            response = await generate_code(
+                telegram_id=msg.from_user.id,
+                request=processed_content,
+                stream=USE_STREAM
+            )
+
+            if USE_STREAM:
+                await handle_streaming_response(msg, response, processed_content, is_code=True)
+            else:
+                await send_response(msg, response)
+                await send_code_file(msg, response)
         else:
-            await send_response(msg, response)
+            # Обычная обработка через OpenAI (БЕЗ изображений - они уже обработаны)
+            response = await process_request(
+                telegram_id=msg.from_user.id,
+                image_paths=None,  # Изображения УЖЕ обработаны в analyzer
+                content=processed_content,
+                stream=USE_STREAM
+            )
+
+            if USE_STREAM:
+                await handle_streaming_response(msg, response, processed_content, is_code=False)
+            else:
+                await send_response(msg, response)
 
     except ValueError as e:
-        # Ошибки валидации изображений
         await msg.answer(f"❌ {str(e)}")
     except Exception as e:
         logging.error(f"Error processing content: {e}")

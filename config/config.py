@@ -28,7 +28,6 @@ TIME_STREAM_UPDATE = 1
 USE_STREAM = True
 
 MODEL_NAME = "gpt-5.2-chat-latest"
-VISION_MODEL_NAME = "meta-llama/llama-4-maverick-17b-128e-instruct"
 
 # Ограничения для изображений
 MAX_IMAGES_PER_REQUEST = 5
@@ -57,11 +56,17 @@ E = mc², a² + b² = c², v = s / t, x = (−b ± √(b² − 4ac)) / 2a
 """
 
 
-VISION_SYSTEM_PROMPT = r"""
-Ты помощник для анализа изображений. Твоя задача:
-1. Если на изображении есть текст или задача - извлеки его полностью и точно
-2. Если это обычное изображение - опиши что на нём изображено детально
-3. Будь точным и информативным
+CODE_GENERATION_PROMPT = r"""
+Ты — эксперт-программист. Генерируй чистый, рабочий код.
+
+Правила:
+1. Оборачивай код в ```язык и ``` (например ```python)
+2. Пиши готовый к запуску код без объяснений до/после блока
+3. Используй понятные имена переменных и функций
+4. Добавляй краткие комментарии для сложной логики
+5. Следуй best practices языка
+
+Поддерживаемые языки: Python, JavaScript, TypeScript, Java, C++, Go, Rust, PHP и др.
 """
 
 
@@ -79,8 +84,8 @@ client = AsyncOpenAI(
     http_client=http_client
 )
 
-# Клиент Groq для обработки изображений (без прокси, если не требуется)
-vision_client = AsyncOpenAI(
+# Клиент Groq (универсальный анализатор - изображения + намерения)
+groq_client = AsyncOpenAI(
     base_url="https://api.groq.com/openai/v1",
     api_key=GROQ_API_KEY
 )

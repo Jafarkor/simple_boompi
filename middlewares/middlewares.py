@@ -10,9 +10,6 @@ redis_client = redis.from_url("redis://localhost")
 
 logger = logging.getLogger(__name__)
 
-
-import logging
-
 class GeneralMiddleware(BaseMiddleware):
     async def __call__(self,
                        handler: Callable,
