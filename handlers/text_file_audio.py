@@ -83,7 +83,7 @@ async def send_code_file(msg: Message, code_response: str, loader: Message):
             await loader.delete()
             await msg.answer_document(
                 doc,
-                caption='Ваш код готов <tg-emoji emoji-id="5350486389806868244">✅</tg-emoji>'
+                caption='<b>Ваш код готов</b> <tg-emoji emoji-id="5208727996315220567">✅</tg-emoji>'
             )
             os.remove(filepath)
         else:
@@ -167,7 +167,7 @@ async def process_content(msg: Message, content: str, image_paths: list[str] = N
 
         if wants_code:
             await msg.react([ReactionTypeEmoji(emoji=random.choice(POPULAR_EMOJIS))])
-            loader = await msg.answer('Генерация кода <tg-emoji emoji-id="5350803719170564382">👾</tg-emoji>')
+            loader = await msg.answer('<b>Генерация кода</b> <tg-emoji emoji-id="5208588564496925340">👾</tg-emoji>')
             # Генерируем код БЕЗ streaming - только файл
             response = await generate_code(
                 telegram_id=msg.from_user.id,
