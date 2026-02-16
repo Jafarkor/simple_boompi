@@ -167,7 +167,7 @@ async def process_content(msg: Message, content: str, image_paths: list[str] = N
 
         if wants_code:
             await msg.react([ReactionTypeEmoji(emoji=random.choice(POPULAR_EMOJIS))])
-            loader = await msg.answer('<b>Генерация кода</b> <tg-emoji emoji-id="5208588564496925340">👾</tg-emoji>')
+            loader = await msg.answer('<b>Генерация кода</b> <tg-emoji emoji-id="5339139919434498721">👾</tg-emoji>')
             # Генерируем код БЕЗ streaming - только файл
             response = await generate_code(
                 telegram_id=msg.from_user.id,
