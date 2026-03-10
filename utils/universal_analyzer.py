@@ -127,7 +127,7 @@ class UniversalAnalyzer:
 
             # ОДИН запрос к Groq для всего
             response = await self.client.chat.completions.create(
-                model="meta-llama/llama-4-maverick-17b-128e-instruct",
+                model="meta-llama/llama-4-scout-17b-16e-instruct",
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
                     {"role": "user", "content": content}
