@@ -27,7 +27,7 @@ MAX_CONTEXT_MESSAGES = 7
 TIME_STREAM_UPDATE = 1
 USE_STREAM = True
 
-MODEL_NAME = "gpt-5.2-chat-latest"
+MODEL_NAME = "gpt-5.4"
 
 # Ограничения для изображений
 MAX_IMAGES_PER_REQUEST = 5
