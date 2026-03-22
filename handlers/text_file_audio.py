@@ -94,7 +94,7 @@ async def send_code_file(msg: Message, code_response: str, loader: Message):
         await msg.reply("❌ Ошибка при создании файла")
 
 
-async def handle_streaming_response(msg: Message, stream_response, content: str):
+async def handle_streaming_response(msg: Message, stream_response, content: str, original_content: str = None):
     """Обрабатывает потоковый ответ от нейросети"""
     full_response = ""
     buffer = ""
@@ -145,7 +145,7 @@ async def handle_streaming_response(msg: Message, stream_response, content: str)
         await msg.answer("Произошла ошибка: ответ нейросети пустой.")
         return
 
-    await save_context(msg.from_user.id, content, full_response)
+    await save_context(msg.from_user.id, original_content or content, full_response)
     await send_response(msg, full_response, message)
 
 
@@ -165,13 +165,19 @@ async def process_content(msg: Message, content: str, image_paths: list[str] = N
 
         logger.info(f"User wants {'CODE' if wants_code else 'TEXT'}")
 
+        # Для текстовых запросов без изображений используем оригинальный content,
+        # чтобы в контекст и в модель шёл именно вопрос пользователя, а не
+        # пересказ от анализатора. processed_content применяется только когда
+        # есть изображения — там он несёт описание картинок.
+        request_content = processed_content if image_paths else content
+
         if wants_code:
             await msg.react([ReactionTypeEmoji(emoji=random.choice(POPULAR_EMOJIS))])
             loader = await msg.answer('<b>Генерация кода</b> <tg-emoji emoji-id="5339139919434498721">👾</tg-emoji>')
             # Генерируем код БЕЗ streaming - только файл
             response = await generate_code(
                 telegram_id=msg.from_user.id,
-                request=processed_content,
+                request=request_content,
                 stream=False  # Всегда False для кода
             )
 
@@ -182,12 +188,13 @@ async def process_content(msg: Message, content: str, image_paths: list[str] = N
             response = await process_request(
                 telegram_id=msg.from_user.id,
                 image_paths=None,  # Изображения УЖЕ обработаны в analyzer
-                content=processed_content,
+                content=request_content,
                 stream=USE_STREAM
             )
 
             if USE_STREAM:
-                await handle_streaming_response(msg, response, processed_content)
+                # original_content нужен для сохранения в контекст именно оригинального вопроса
+                await handle_streaming_response(msg, response, request_content, original_content=content)
             else:
                 await send_response(msg, response)
 
