@@ -22,12 +22,12 @@ BOT_USERNAME = '@boompi_ai_bot'
 SUPPORT_USERNAME = "@boompi_ai_support"
 
 
-MAX_WORD_COUNT = 2000
+MAX_WORD_COUNT = 3000
 MAX_CONTEXT_MESSAGES = 7
 TIME_STREAM_UPDATE = 1
 USE_STREAM = True
 
-MODEL_NAME = "gpt-5.3-chat-latest"
+MODEL_NAME = "gpt-5.4"
 
 # Ограничения для изображений
 MAX_IMAGES_PER_REQUEST = 5
