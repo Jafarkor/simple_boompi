@@ -2,6 +2,7 @@ import logging
 import base64
 import aiofiles
 import os
+import re
 from typing import Optional, Tuple, List
 from openai import AsyncOpenAI
 from PIL import Image
@@ -22,17 +23,43 @@ class UniversalAnalyzer:
 
 ВАЖНО: В своём ответе ты ОБЯЗАТЕЛЬНО начинаешь с тега <intent>CODE</intent> или <intent>TEXT</intent>
 
+Правила определения:
+- <intent>CODE</intent> — пользователь хочет получить ПРОГРАММНЫЙ КОД (скрипт, функцию, приложение, сайт, бот, алгоритм на языке программирования)
+- <intent>TEXT</intent> — ВСЁ ОСТАЛЬНОЕ: объяснения, сочинения, эссе, рассказы, стихи, переводы, решения задач, описания, инструкции, вопросы, анализ изображений
+
 Если пользователь хочет СГЕНЕРИРОВАТЬ КОД:
 <intent>CODE</intent>
 Опиши ПОДРОБНО что нужно сделать в коде, на каком языке, какие требования.
 Если есть изображения с кодом - извлеки их содержимое.
 
-Если пользователь хочет ОБЫЧНЫЙ ОТВЕТ (объяснение, решение задачи, описание изображения):
+Если пользователь хочет ОБЫЧНЫЙ ОТВЕТ (текст, объяснение, творческое задание и т.д.):
 <intent>TEXT</intent>
 Опиши что на изображениях (если есть), извлеки текст, задачи.
 Или просто перескажи текстовый запрос для контекста.
 
-Примеры:
+Примеры CODE запросов (только программирование):
+- "Напиши калькулятор на Python" → CODE
+- "Сделай сайт на HTML и CSS" → CODE
+- "Создай телеграм бота" → CODE
+- "Напиши функцию сортировки на JavaScript" → CODE
+- "Исправь ошибки в этом коде: [код]" → CODE
+- [фото с кодом] + "Что не так с этим кодом?" → CODE
+
+Примеры TEXT запросов (всё остальное):
+- "Напиши сочинение о природе" → TEXT
+- "Напиши эссе про космос" → TEXT
+- "Напиши рассказ о дружбе" → TEXT
+- "Переведи этот текст на английский" → TEXT
+- "Объясни как работает интернет" → TEXT
+- "Реши уравнение x^2 + 5x + 6 = 0" → TEXT
+- "Что такое машинное обучение?" → TEXT
+- "Напиши план на день" → TEXT
+- "Составь список покупок" → TEXT
+- "Что на этой картинке?" + [фото] → TEXT
+- "Как функция sin(x) связана с косинусом?" → TEXT
+- "Напиши поздравление на день рождения" → TEXT
+- "Сделай краткое содержание книги" → TEXT
+- "Переведи песню" → TEXT
 
 Запрос: "Напиши калькулятор на Python"
 <intent>CODE</intent>
@@ -48,7 +75,15 @@ class UniversalAnalyzer:
 
 Запрос: "Реши уравнение x^2 + 5x + 6 = 0"
 <intent>TEXT</intent>
-Нужно решить квадратное уравнение x^2 + 5x + 6 = 0."""
+Нужно решить квадратное уравнение x^2 + 5x + 6 = 0.
+
+Запрос: "Напиши сочинение о временах года"
+<intent>TEXT</intent>
+Пользователь хочет получить сочинение (творческий текст) о временах года.
+
+Запрос: "Напиши эссе про влияние технологий на общество"
+<intent>TEXT</intent>
+Пользователь хочет эссе — развёрнутый текстовый ответ про влияние технологий."""
 
     def __init__(self, groq_client: AsyncOpenAI):
         self.client = groq_client
@@ -91,6 +126,84 @@ class UniversalAnalyzer:
 
         return f"data:{mime_type};base64,{img_base64}", mime_type
 
+    def _parse_intent(self, result: str) -> Tuple[Optional[bool], str]:
+        """
+        Надёжно парсит тег <intent> из ответа модели.
+        Ищет тег только в начале строки (первые 200 символов), чтобы
+        избежать ложных срабатываний при упоминании тега в теле ответа.
+
+        Returns:
+            (wants_code: Optional[bool], processed: str)
+            wants_code = None если тег не найден
+        """
+        # Ищем тег в начале ответа (первые 200 символов)
+        header = result[:200]
+
+        code_match = re.search(r'<intent>CODE</intent>', header, re.IGNORECASE)
+        text_match = re.search(r'<intent>TEXT</intent>', header, re.IGNORECASE)
+
+        if code_match and text_match:
+            # Оба тега — берём тот, что стоит раньше
+            if code_match.start() < text_match.start():
+                wants_code = True
+                tag = code_match.group(0)
+            else:
+                wants_code = False
+                tag = text_match.group(0)
+        elif code_match:
+            wants_code = True
+            tag = code_match.group(0)
+        elif text_match:
+            wants_code = False
+            tag = text_match.group(0)
+        else:
+            # Проверяем весь текст — вдруг модель добавила тег не в начале
+            code_match_full = re.search(r'<intent>CODE</intent>', result, re.IGNORECASE)
+            text_match_full = re.search(r'<intent>TEXT</intent>', result, re.IGNORECASE)
+
+            if code_match_full and not text_match_full:
+                wants_code = True
+                tag = code_match_full.group(0)
+            elif text_match_full and not code_match_full:
+                wants_code = False
+                tag = text_match_full.group(0)
+            else:
+                return None, result
+
+        processed = result.replace(tag, "", 1).strip()
+        return wants_code, processed
+
+    def _fallback_intent(self, user_text: str) -> bool:
+        """
+        Fallback-определение намерения по ключевым словам в ОРИГИНАЛЬНОМ запросе
+        пользователя (не в ответе модели).
+
+        Возвращает True только если запрос явно связан с кодом/программированием.
+        В сомнительных случаях — False (текстовый ответ безопаснее).
+        """
+        text_lower = user_text.lower()
+
+        # Явные признаки запроса кода — специфичные фразы
+        code_keywords = [
+            "напиши код", "write code", "напиши скрипт", "напиши программу",
+            "напиши функцию", "напиши класс", "напиши метод",
+            "сделай сайт", "сделай бота", "сделай приложение",
+            "создай сайт", "создай бота", "создай приложение", "создай скрипт",
+            "on python", "на python", "на javascript", "на java", "на c++",
+            "на c#", "на php", "на golang", "на rust", "на typescript",
+            "html код", "css код", "исправь код", "отладь код",
+            "дебаг", "debug", "рефакторинг", "рефакторить",
+        ]
+
+        for keyword in code_keywords:
+            if keyword in text_lower:
+                logger.info(f"Fallback: CODE detected by keyword '{keyword}'")
+                return True
+
+        # Всё остальное — текстовый ответ (безопасный дефолт)
+        logger.info("Fallback: defaulting to TEXT (safe default)")
+        return False
+
     async def analyze(
         self,
         user_text: str,
@@ -126,6 +239,7 @@ class UniversalAnalyzer:
                     })
 
             # ОДИН запрос к Groq для всего
+            # Температура 0.1 — для надёжной классификации (низкая = стабильный формат)
             response = await self.client.chat.completions.create(
                 model="meta-llama/llama-4-scout-17b-16e-instruct",
                 messages=[
@@ -133,30 +247,33 @@ class UniversalAnalyzer:
                     {"role": "user", "content": content}
                 ],
                 max_tokens=1024,
-                temperature=0.8
+                temperature=0.3
             )
 
             result = response.choices[0].message.content.strip()
+            logger.debug(f"Analyzer raw response (first 200): {result[:200]}")
 
-            # Парсим намерение
-            if "<intent>CODE</intent>" in result:
-                wants_code = True
-                # Убираем тег из контента
-                processed = result.replace("<intent>CODE</intent>", "").strip()
-            elif "<intent>TEXT</intent>" in result:
-                wants_code = False
-                processed = result.replace("<intent>TEXT</intent>", "").strip()
-            else:
-                # Fallback: если тег не найден, пробуем определить по ключевым словам
-                logger.warning(f"Intent tag not found in response: {result[:100]}")
-                wants_code = any(word in result.lower() for word in
-                               ["код", "code", "функция", "function", "скрипт", "script"])
+            # Надёжный парсинг тега
+            wants_code, processed = self._parse_intent(result)
+
+            if wants_code is None:
+                # Тег не найден вообще — используем fallback по оригинальному запросу
+                logger.warning(
+                    f"Intent tag not found in response. Falling back to keyword check. "
+                    f"Response start: {result[:100]!r}"
+                )
+                wants_code = self._fallback_intent(user_text)
                 processed = result
 
             logger.info(f"Analysis result: wants_code={wants_code}, content_len={len(processed)}")
             return wants_code, processed
 
+        except ValueError:
+            # Пробрасываем ошибки валидации (лимиты изображений и т.п.)
+            raise
         except Exception as e:
             logger.error(f"Error in universal analysis: {e}")
-            # Fallback: считаем что обычный запрос
-            return False, user_text
+            # Безопасный fallback — пробуем определить по ключевым словам
+            wants_code = self._fallback_intent(user_text)
+            logger.info(f"Fallback after exception: wants_code={wants_code}")
+            return wants_code, user_text
