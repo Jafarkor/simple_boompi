@@ -101,8 +101,8 @@ async def handle_streaming_response(msg: Message, stream_response, content: str,
     message = None
 
     MIN_UPDATE_INTERVAL = TIME_STREAM_UPDATE
-    MIN_CHUNK_SIZE = 100
-    MAX_CHUNK_SIZE = 200
+    MIN_CHUNK_SIZE = 50
+    MAX_CHUNK_SIZE = 300
 
     last_update_time = asyncio.get_event_loop().time() - MIN_UPDATE_INTERVAL
 
