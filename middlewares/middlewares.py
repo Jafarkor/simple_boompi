@@ -1,26 +1,41 @@
-from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject, User
-
-from typing import Callable, Any
+"""Глобальный middleware — логирование и ловля непойманных исключений."""
 import logging
-from config.config import redis
+import time
+from typing import Any, Awaitable, Callable
 
-redis_client = redis.from_url("redis://localhost")
-
+from aiogram import BaseMiddleware
+from aiogram.types import TelegramObject, Update, User
 
 logger = logging.getLogger(__name__)
 
-class GeneralMiddleware(BaseMiddleware):
-    async def __call__(self,
-                       handler: Callable,
-                       event: TelegramObject,
-                       data: dict[str, Any]) -> Any:
-        user: User | None = data["event_from_user"]
 
+class GeneralMiddleware(BaseMiddleware):
+    """
+    Логирует входящие апдейты с временем обработки.
+    Ловит ВСЕ исключения, чтобы не было «Task exception was never retrieved».
+    """
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        user: User | None = data.get("event_from_user")
+        user_id = user.id if user else "unknown"
+
+        start = time.monotonic()
         try:
-            return await handler(event, data)
+            result = await handler(event, data)
+            elapsed = time.monotonic() - start
+            if elapsed > 5.0:  # медленные хендлеры — в лог
+                logger.info(f"Handler took {elapsed:.1f}s for user {user_id}")
+            return result
 
         except Exception as e:
-            logging.error(e)
-
-        return
+            elapsed = time.monotonic() - start
+            logger.exception(
+                f"Unhandled exception in handler for user {user_id} "
+                f"after {elapsed:.1f}s: {e}"
+            )
+            return None

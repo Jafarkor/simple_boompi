@@ -1,23 +1,32 @@
-import logging
+"""Универсальный анализатор: за один запрос к Groq определяет CODE/TEXT и обрабатывает изображения."""
+from __future__ import annotations
+
+import asyncio
 import base64
-import aiofiles
+import logging
 import os
 import re
-from typing import Optional, Tuple, List
-from openai import AsyncOpenAI
-from PIL import Image
 from io import BytesIO
+from typing import Optional, Tuple, List
+
+import aiofiles
+from PIL import Image
+from openai import AsyncOpenAI
+
+from config.config import (
+    MAX_IMAGES_PER_REQUEST,
+    MAX_IMAGE_SIZE_MB,
+    MAX_IMAGE_RESOLUTION_MP,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class UniversalAnalyzer:
-    """Анализирует текст/изображения и определяет намерение за ОДИН запрос к Groq"""
+_INTENT_TAG_RE = re.compile(r"<intent>\s*(CODE|TEXT)\s*</intent>", re.IGNORECASE)
 
-    # Ограничения для изображений (из config)
-    MAX_IMAGES_PER_REQUEST = 5
-    MAX_IMAGE_SIZE_MB = 4
-    MAX_IMAGE_RESOLUTION_MP = 33
+
+class UniversalAnalyzer:
+    """Один запрос к Groq: text + images → (wants_code, processed_content)."""
 
     SYSTEM_PROMPT = """Ты умный ассистент-анализатор. Анализируй запросы пользователя и определяй его намерение.
 
@@ -53,227 +62,134 @@ class UniversalAnalyzer:
 - "Объясни как работает интернет" → TEXT
 - "Реши уравнение x^2 + 5x + 6 = 0" → TEXT
 - "Что такое машинное обучение?" → TEXT
-- "Напиши план на день" → TEXT
-- "Составь список покупок" → TEXT
 - "Что на этой картинке?" + [фото] → TEXT
-- "Как функция sin(x) связана с косинусом?" → TEXT
-- "Напиши поздравление на день рождения" → TEXT
-- "Сделай краткое содержание книги" → TEXT
-- "Переведи песню" → TEXT
-
-Запрос: "Напиши калькулятор на Python"
-<intent>CODE</intent>
-Нужно создать калькулятор на языке Python с базовыми операциями: сложение, вычитание, умножение, деление.
-
-Запрос: [фото с Python кодом] + "Исправь ошибки"
-<intent>CODE</intent>
-На изображении код Python: [код]. Нужно исправить синтаксические ошибки и улучшить код.
-
-Запрос: "Что на этой картинке?" + [фото гор]
-<intent>TEXT</intent>
-На изображении горный пейзаж: заснеженные вершины, голубое небо, сосновый лес у подножия.
-
-Запрос: "Реши уравнение x^2 + 5x + 6 = 0"
-<intent>TEXT</intent>
-Нужно решить квадратное уравнение x^2 + 5x + 6 = 0.
-
-Запрос: "Напиши сочинение о временах года"
-<intent>TEXT</intent>
-Пользователь хочет получить сочинение (творческий текст) о временах года.
-
-Запрос: "Напиши эссе про влияние технологий на общество"
-<intent>TEXT</intent>
-Пользователь хочет эссе — развёрнутый текстовый ответ про влияние технологий."""
+- "Напиши поздравление на день рождения" → TEXT"""
 
     def __init__(self, groq_client: AsyncOpenAI):
         self.client = groq_client
 
     async def _validate_image(self, image_path: str) -> Tuple[bool, str]:
-        """Валидация изображения"""
         try:
             file_size_mb = os.path.getsize(image_path) / (1024 * 1024)
-            if file_size_mb > self.MAX_IMAGE_SIZE_MB:
-                return False, f"Размер изображения ({file_size_mb:.1f}MB) превышает максимальный ({self.MAX_IMAGE_SIZE_MB}MB)"
+            if file_size_mb > MAX_IMAGE_SIZE_MB:
+                return False, f"Размер ({file_size_mb:.1f} MB) превышает {MAX_IMAGE_SIZE_MB} MB"
 
             async with aiofiles.open(image_path, "rb") as f:
-                image_data = await f.read()
+                data = await f.read()
 
-            img = Image.open(BytesIO(image_data))
-            width, height = img.size
-            megapixels = (width * height) / 1_000_000
+            def _mp() -> float:
+                with Image.open(BytesIO(data)) as img:
+                    w, h = img.size
+                    return (w * h) / 1_000_000
 
-            if megapixels > self.MAX_IMAGE_RESOLUTION_MP:
-                return False, f"Разрешение изображения ({megapixels:.1f}MP) превышает максимальное ({self.MAX_IMAGE_RESOLUTION_MP}MP)"
+            megapixels = await asyncio.to_thread(_mp)
+            if megapixels > MAX_IMAGE_RESOLUTION_MP:
+                return False, f"Разрешение ({megapixels:.1f} MP) превышает {MAX_IMAGE_RESOLUTION_MP} MP"
 
             return True, ""
         except Exception as e:
-            logger.error(f"Ошибка валидации изображения {image_path}: {e}")
-            return False, f"Ошибка проверки изображения: {str(e)}"
+            logger.error(f"Ошибка валидации {image_path}: {e}")
+            return False, f"Не удалось проверить изображение: {e}"
 
-    async def _encode_image(self, image_path: str) -> Tuple[str, str]:
-        """Кодирует изображение в base64"""
+    async def _encode_image(self, image_path: str) -> str:
         async with aiofiles.open(image_path, "rb") as f:
-            image_data = await f.read()
-
-        img_base64 = base64.b64encode(image_data).decode("utf-8")
-
-        ext = image_path.lower().split('.')[-1]
-        mime_mapping = {
-            'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
-            'png': 'image/png', 'webp': 'image/webp', 'gif': 'image/gif'
-        }
-        mime_type = mime_mapping.get(ext, 'image/jpeg')
-
-        return f"data:{mime_type};base64,{img_base64}", mime_type
+            data = await f.read()
+        b64 = base64.b64encode(data).decode("utf-8")
+        ext = image_path.lower().rsplit(".", 1)[-1]
+        mime = {
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "png": "image/png", "webp": "image/webp", "gif": "image/gif",
+        }.get(ext, "image/jpeg")
+        return f"data:{mime};base64,{b64}"
 
     def _parse_intent(self, result: str) -> Tuple[Optional[bool], str]:
-        """
-        Надёжно парсит тег <intent> из ответа модели.
-        Ищет тег только в начале строки (первые 200 символов), чтобы
-        избежать ложных срабатываний при упоминании тега в теле ответа.
+        """Ищет тег в начале ответа; единый regex для обоих вариантов."""
+        # Проверяем первые 200 символов — там должен быть тег
+        match = _INTENT_TAG_RE.search(result, 0, 200)
+        if match is None:
+            # Может быть и где-то дальше, поищем во всём тексте
+            match = _INTENT_TAG_RE.search(result)
+        if match is None:
+            return None, result
 
-        Returns:
-            (wants_code: Optional[bool], processed: str)
-            wants_code = None если тег не найден
-        """
-        # Ищем тег в начале ответа (первые 200 символов)
-        header = result[:200]
-
-        code_match = re.search(r'<intent>CODE</intent>', header, re.IGNORECASE)
-        text_match = re.search(r'<intent>TEXT</intent>', header, re.IGNORECASE)
-
-        if code_match and text_match:
-            # Оба тега — берём тот, что стоит раньше
-            if code_match.start() < text_match.start():
-                wants_code = True
-                tag = code_match.group(0)
-            else:
-                wants_code = False
-                tag = text_match.group(0)
-        elif code_match:
-            wants_code = True
-            tag = code_match.group(0)
-        elif text_match:
-            wants_code = False
-            tag = text_match.group(0)
-        else:
-            # Проверяем весь текст — вдруг модель добавила тег не в начале
-            code_match_full = re.search(r'<intent>CODE</intent>', result, re.IGNORECASE)
-            text_match_full = re.search(r'<intent>TEXT</intent>', result, re.IGNORECASE)
-
-            if code_match_full and not text_match_full:
-                wants_code = True
-                tag = code_match_full.group(0)
-            elif text_match_full and not code_match_full:
-                wants_code = False
-                tag = text_match_full.group(0)
-            else:
-                return None, result
-
-        processed = result.replace(tag, "", 1).strip()
+        wants_code = match.group(1).upper() == "CODE"
+        processed = (result[:match.start()] + result[match.end():]).strip()
         return wants_code, processed
 
     def _fallback_intent(self, user_text: str) -> bool:
-        """
-        Fallback-определение намерения по ключевым словам в ОРИГИНАЛЬНОМ запросе
-        пользователя (не в ответе модели).
-
-        Возвращает True только если запрос явно связан с кодом/программированием.
-        В сомнительных случаях — False (текстовый ответ безопаснее).
-        """
+        """Безопасный fallback по ключевым словам в запросе пользователя."""
         text_lower = user_text.lower()
-
-        # Явные признаки запроса кода — специфичные фразы
-        code_keywords = [
+        keywords = [
             "напиши код", "write code", "напиши скрипт", "напиши программу",
             "напиши функцию", "напиши класс", "напиши метод",
             "сделай сайт", "сделай бота", "сделай приложение",
             "создай сайт", "создай бота", "создай приложение", "создай скрипт",
-            "on python", "на python", "на javascript", "на java", "на c++",
+            "на python", "на javascript", "на java", "на c++",
             "на c#", "на php", "на golang", "на rust", "на typescript",
             "html код", "css код", "исправь код", "отладь код",
-            "дебаг", "debug", "рефакторинг", "рефакторить",
+            "debug", "рефакторинг",
         ]
-
-        for keyword in code_keywords:
-            if keyword in text_lower:
-                logger.info(f"Fallback: CODE detected by keyword '{keyword}'")
+        for kw in keywords:
+            if kw in text_lower:
+                logger.info(f"Fallback: CODE detected by '{kw}'")
                 return True
-
-        # Всё остальное — текстовый ответ (безопасный дефолт)
-        logger.info("Fallback: defaulting to TEXT (safe default)")
+        logger.info("Fallback: defaulting to TEXT")
         return False
 
     async def analyze(
         self,
         user_text: str,
-        image_paths: Optional[List[str]] = None
+        image_paths: Optional[List[str]] = None,
     ) -> Tuple[bool, str]:
-        """
-        Анализирует контент за ОДИН запрос к Groq
-
-        Returns:
-            (wants_code: bool, processed_content: str)
-        """
+        """Один запрос к Groq → (wants_code, processed_content)."""
         try:
-            # Валидация изображений если есть
             if image_paths:
-                if len(image_paths) > self.MAX_IMAGES_PER_REQUEST:
-                    raise ValueError(f"Максимум {self.MAX_IMAGES_PER_REQUEST} изображений за раз")
+                if len(image_paths) > MAX_IMAGES_PER_REQUEST:
+                    raise ValueError(f"Максимум {MAX_IMAGES_PER_REQUEST} изображений за раз")
 
-                for img_path in image_paths:
-                    is_valid, error_msg = await self._validate_image(img_path)
-                    if not is_valid:
-                        raise ValueError(error_msg)
+                # Валидируем параллельно — экономит секунды на больших альбомах
+                results = await asyncio.gather(
+                    *(self._validate_image(p) for p in image_paths),
+                    return_exceptions=True,
+                )
+                for ok, err in results:
+                    if isinstance(ok, Exception):
+                        raise ValueError(f"Ошибка проверки изображения: {ok}")
+                    if not ok:
+                        raise ValueError(err)
 
-            # Формируем контент для запроса
-            content = [{"type": "text", "text": user_text}]
-
-            # Добавляем изображения если есть
+            # Формируем мультимодальный контент
+            content: list[dict] = [{"type": "text", "text": user_text}]
             if image_paths:
-                for img_path in image_paths:
-                    img_url, _ = await self._encode_image(img_path)
-                    content.append({
-                        "type": "image_url",
-                        "image_url": {"url": img_url}
-                    })
+                # Кодируем параллельно
+                urls = await asyncio.gather(*(self._encode_image(p) for p in image_paths))
+                for url in urls:
+                    content.append({"type": "image_url", "image_url": {"url": url}})
 
-            # ОДИН запрос к Groq для всего
-            # Температура 0.1 — для надёжной классификации (низкая = стабильный формат)
             response = await self.client.chat.completions.create(
                 model="meta-llama/llama-4-scout-17b-16e-instruct",
                 messages=[
                     {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": content}
+                    {"role": "user", "content": content},
                 ],
                 max_tokens=1024,
-                temperature=0.3
+                temperature=0.3,
             )
 
-            result = response.choices[0].message.content.strip()
-            logger.debug(f"Analyzer raw response (first 200): {result[:200]}")
+            result = (response.choices[0].message.content or "").strip()
+            logger.debug(f"Analyzer response (head): {result[:200]!r}")
 
-            # Надёжный парсинг тега
             wants_code, processed = self._parse_intent(result)
-
             if wants_code is None:
-                # Тег не найден вообще — используем fallback по оригинальному запросу
-                logger.warning(
-                    f"Intent tag not found in response. Falling back to keyword check. "
-                    f"Response start: {result[:100]!r}"
-                )
+                logger.warning(f"Intent tag not found, fallback. Head: {result[:100]!r}")
                 wants_code = self._fallback_intent(user_text)
-                processed = result
+                processed = result or user_text
 
-            logger.info(f"Analysis result: wants_code={wants_code}, content_len={len(processed)}")
+            logger.info(f"Analysis: wants_code={wants_code}, processed_len={len(processed)}")
             return wants_code, processed
 
         except ValueError:
-            # Пробрасываем ошибки валидации (лимиты изображений и т.п.)
             raise
         except Exception as e:
-            logger.error(f"Error in universal analysis: {e}")
-            # Безопасный fallback — пробуем определить по ключевым словам
-            wants_code = self._fallback_intent(user_text)
-            logger.info(f"Fallback after exception: wants_code={wants_code}")
-            return wants_code, user_text
+            logger.error(f"Analyzer error: {e}")
+            return self._fallback_intent(user_text), user_text
