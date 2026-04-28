@@ -1,7 +1,7 @@
 """Обработчик text/voice/document/photo сообщений.
 
 Главные новые фичи:
-- Кнопка [❌ Отменить] под loader-ом и под стрим-сообщением — реально
+- Кнопка [Отменить] под loader-ом и под стрим-сообщением — реально
   отменяет async-задачу (через task.cancel()).
 - Детальный DEBUG-лог: для каждого запроса видно тайминг, стадию (analyze /
   stream / final), статус (OK / FAIL / CANCELLED), размеры данных и счётчики.
@@ -142,7 +142,7 @@ async def _stream_via_edit_text(
     cancel_markup: InlineKeyboardMarkup | None = None,
 ) -> str:
     """
-    Стриминг через editMessageText с кнопкой [❌ Отменить].
+    Стриминг через editMessageText с кнопкой [Отменить].
 
     cancel_markup передаётся на КАЖДОМ edit, иначе Telegram удаляет кнопку.
     На финальном edit передаётся reply_markup=None — кнопка снимается.
@@ -333,7 +333,7 @@ async def handle_streaming_response(
     """Точка входа в стриминг + сохранение контекста.
 
     CancelledError ПРОБРАСЫВАЕТСЯ — её ловит process_content и редактирует
-    loader в «❌ Отменено». Здесь только нерекуррентные ошибки.
+    loader в «Отменено». Здесь только нерекуррентные ошибки.
     """
     if USE_NATIVE_DRAFT_STREAM:
         full_response = await _stream_via_native_draft(
@@ -488,7 +488,7 @@ async def process_content(
             )
             return
 
-        # ─── Loader с кнопкой [❌ Отменить] ───
+        # ─── Loader с кнопкой [Отменить] ───
         # Текст подбираем под тип входа.
         if has_images:
             initial_text = "🖼 <b>Распознаю изображение...</b>"
@@ -701,7 +701,7 @@ async def photo_handler(msg: Message) -> None:
 # ────────────────────────────────────────────────────────────────────────────
 @rt.callback_query(lambda c: c.data and c.data.startswith(CANCEL_CB_PREFIX))
 async def cancel_callback(callback: CallbackQuery) -> None:
-    """Обработка нажатия [❌ Отменить] под сообщением бота."""
+    """Обработка нажатия [Отменить] под сообщением бота."""
     parsed = parse_cancel_data(callback.data or "")
     if parsed is None:
         await callback.answer("Некорректные данные", show_alert=False)

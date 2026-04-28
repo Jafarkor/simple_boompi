@@ -2,7 +2,7 @@
 Реестр in-flight asyncio-задач + клавиатура для их отмены пользователем.
 
 Когда пользователь шлёт запрос, мы:
-1. Отправляем loader-сообщение с кнопкой [❌ Отменить] и callback_data
+1. Отправляем loader-сообщение с кнопкой [Отменить] и callback_data
    `cancel:{chat_id}:{message_id}`.
 2. Заворачиваем работу в asyncio.Task и регистрируем здесь по ключу
    (chat_id, message_id).
@@ -36,7 +36,7 @@ def make_cancel_keyboard(chat_id: int, message_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[
             InlineKeyboardButton(
-                text="❌ Отменить",
+                text="Отменить",
                 callback_data=f"{CANCEL_CB_PREFIX}{chat_id}:{message_id}",
             )
         ]]
