@@ -76,8 +76,8 @@ MAX_TELEGRAM_MESSAGE_LENGTH = 4096  # лимит Telegram
 # Сколько токенов разрешаем модели сгенерировать.
 # 1100 было слишком мало — задачи с фото и сложные объяснения обрезались.
 # 4000 ≈ один полный ответ Telegram (~4096 символов).
-MAX_OUTPUT_TOKENS_TEXT = 4000
-MAX_OUTPUT_TOKENS_CODE = 4000
+MAX_OUTPUT_TOKENS_TEXT = 2000
+MAX_OUTPUT_TOKENS_CODE = 2000
 
 # Streaming
 USE_STREAM = True
