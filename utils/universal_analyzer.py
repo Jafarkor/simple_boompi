@@ -18,6 +18,7 @@ from config.config import (
     MAX_IMAGE_SIZE_MB,
     MAX_IMAGE_RESOLUTION_MP,
 )
+from utils.logging_helpers import log_timing
 
 logger = logging.getLogger(__name__)
 
@@ -166,15 +167,22 @@ class UniversalAnalyzer:
                 for url in urls:
                     content.append({"type": "image_url", "image_url": {"url": url}})
 
-            response = await self.client.chat.completions.create(
-                model="meta-llama/llama-4-scout-17b-16e-instruct",
-                messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": content},
-                ],
-                max_tokens=1024,
-                temperature=0.3,
-            )
+            response = None
+            async with log_timing(
+                "groq.analyze",
+                images=len(image_paths) if image_paths else 0,
+                text_chars=len(user_text),
+                model="llama-4-scout",
+            ):
+                response = await self.client.chat.completions.create(
+                    model="meta-llama/llama-4-scout-17b-16e-instruct",
+                    messages=[
+                        {"role": "system", "content": self.SYSTEM_PROMPT},
+                        {"role": "user", "content": content},
+                    ],
+                    max_tokens=1024,
+                    temperature=0.3,
+                )
 
             result = (response.choices[0].message.content or "").strip()
             logger.debug(f"Analyzer response (head): {result[:200]!r}")

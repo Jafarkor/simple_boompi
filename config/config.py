@@ -73,6 +73,12 @@ MAX_WORD_COUNT = 3000
 MAX_CONTEXT_MESSAGES = 7
 MAX_TELEGRAM_MESSAGE_LENGTH = 4096  # лимит Telegram
 
+# Сколько токенов разрешаем модели сгенерировать.
+# 1100 было слишком мало — задачи с фото и сложные объяснения обрезались.
+# 4000 ≈ один полный ответ Telegram (~4096 символов).
+MAX_OUTPUT_TOKENS_TEXT = 4000
+MAX_OUTPUT_TOKENS_CODE = 4000
+
 # Streaming
 USE_STREAM = True
 TIME_STREAM_UPDATE = 1.2  # сек между edit_text — щадящий темп для Telegram
@@ -139,9 +145,11 @@ CODE_GENERATION_PROMPT = r"""
 # Основной клиент через прокси (переменная PROXY = "user:pass@host:port" или "host:port")
 _proxy_url = f"http://{PROXY}" if PROXY else None
 
-# Limits — пул соединений и таймауты, чтобы не плодить TCP коннекты
+# Limits — пул соединений и таймауты, чтобы не плодить TCP коннекты.
+# read=180 — стримы с картинками иногда долго стартуют (5-15с на vision) +
+# само время генерации (до 60с на длинный ответ).
 _limits = httpx.Limits(max_keepalive_connections=20, max_connections=100, keepalive_expiry=30.0)
-_timeout = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
+_timeout = httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)
 
 http_client_main = httpx.AsyncClient(proxy=_proxy_url, limits=_limits, timeout=_timeout)
 http_client_groq = httpx.AsyncClient(limits=_limits, timeout=_timeout)

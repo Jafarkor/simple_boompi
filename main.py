@@ -24,15 +24,32 @@ except ImportError:
 # Логирование
 # ────────────────────────────────────────────────────────────────────────────
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+
+# В DEBUG-режиме показываем больше: миллисекунды, файл:линия — это нужно
+# чтобы видеть какой именно запрос идёт и сколько он отрабатывал.
+if LOG_LEVEL == "DEBUG":
+    log_format = "%(asctime)s.%(msecs)03d | %(levelname)-5s | %(name)s:%(lineno)d | %(message)s"
+else:
+    log_format = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+
 logging.basicConfig(
     level=LOG_LEVEL,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    format=log_format,
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-# Снижаем шум сторонних либ
+
+# Снижаем шум сторонних либ — они в DEBUG режиме залили бы консоль
+# своими внутренностями (HTTP-заголовками, retry-стратегиями и т.п.)
 logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("aiohttp.server").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING if LOG_LEVEL != "DEBUG" else logging.INFO)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING if LOG_LEVEL != "DEBUG" else logging.INFO)
+logging.getLogger("aiogram.event").setLevel(logging.INFO)
+# Наши логи — наоборот, на максимум подробности при DEBUG
+logging.getLogger("timing").setLevel(LOG_LEVEL)
+logging.getLogger("handlers").setLevel(LOG_LEVEL)
+logging.getLogger("utils").setLevel(LOG_LEVEL)
 
 
 # ────────────────────────────────────────────────────────────────────────────

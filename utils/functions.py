@@ -24,7 +24,10 @@ from config.config import (
     MODEL_NAME,
     MAX_IMAGE_SIZE_MB,
     MAX_IMAGE_RESOLUTION_MP,
+    MAX_OUTPUT_TOKENS_TEXT,
+    MAX_OUTPUT_TOKENS_CODE,
 )
+from utils.logging_helpers import log_timing
 
 logger = logging.getLogger(__name__)
 
@@ -72,27 +75,32 @@ async def validate_image(image_path: str) -> tuple[bool, str]:
 async def process_audio_with_whisper(telegram_id: int, file_path: str) -> str:
     mp3_path = file_path.rsplit(".", 1)[0] + ".mp3"
     try:
-        process = await asyncio.create_subprocess_exec(
-            "/usr/bin/ffmpeg", "-y", "-i", file_path, "-acodec", "mp3", mp3_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await process.communicate()
-        if process.returncode != 0:
-            raise RuntimeError(f"ffmpeg failed: {stderr.decode(errors='replace')[:500]}")
+        async with log_timing("ffmpeg.convert_to_mp3", path=file_path):
+            process = await asyncio.create_subprocess_exec(
+                "/usr/bin/ffmpeg", "-y", "-i", file_path, "-acodec", "mp3", mp3_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await process.communicate()
+            if process.returncode != 0:
+                raise RuntimeError(f"ffmpeg failed: {stderr.decode(errors='replace')[:500]}")
 
         async with aiofiles.open(mp3_path, "rb") as audio_file:
             audio_data = await audio_file.read()
 
-        transcription = await client.audio.transcriptions.create(
-            model="gpt-4o-mini-transcribe",
-            file=("audio.mp3", audio_data, "audio/mp3"),
-            response_format="text",
-        )
+        async with log_timing(
+            "openai.whisper.transcribe",
+            user=telegram_id,
+            audio_kb=len(audio_data) // 1024,
+        ):
+            transcription = await client.audio.transcriptions.create(
+                model="gpt-4o-mini-transcribe",
+                file=("audio.mp3", audio_data, "audio/mp3"),
+                response_format="text",
+            )
         return transcription if isinstance(transcription, str) else str(transcription)
 
     finally:
-        # Подчищаем mp3 даже при ошибке
         if os.path.exists(mp3_path):
             try:
                 os.remove(mp3_path)
@@ -263,25 +271,43 @@ async def process_request(
     messages.append({"role": "user", "content": content})
 
     if stream:
-        return await client.chat.completions.create(
+        async with log_timing(
+            "openai.chat.create",
+            mode="stream",
+            user=telegram_id,
+            model=MODEL_NAME,
+            ctx_msgs=len(context_list),
+            input_chars=len(content),
+            max_tokens=MAX_OUTPUT_TOKENS_TEXT,
+        ):
+            return await client.chat.completions.create(
+                messages=messages,
+                model=MODEL_NAME,
+                max_completion_tokens=MAX_OUTPUT_TOKENS_TEXT,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
+
+    async with log_timing(
+        "openai.chat.create",
+        mode="full",
+        user=telegram_id,
+        model=MODEL_NAME,
+        ctx_msgs=len(context_list),
+        input_chars=len(content),
+        max_tokens=MAX_OUTPUT_TOKENS_TEXT,
+    ):
+        response = await client.chat.completions.create(
             messages=messages,
             model=MODEL_NAME,
-            max_completion_tokens=1100,
-            stream=True,
-            stream_options={"include_usage": True},
+            max_completion_tokens=MAX_OUTPUT_TOKENS_TEXT,
         )
-
-    response = await client.chat.completions.create(
-        messages=messages,
-        model=MODEL_NAME,
-        max_completion_tokens=1100,
-    )
 
     usage = response.usage
     if usage:
         logger.info(
-            f"Tokens used: total={usage.total_tokens}, "
-            f"in={usage.prompt_tokens}, out={usage.completion_tokens}"
+            f"openai.tokens user={telegram_id} total={usage.total_tokens} "
+            f"in={usage.prompt_tokens} out={usage.completion_tokens}"
         )
 
     bot_response = response.choices[0].message.content or ""
@@ -300,19 +326,35 @@ async def generate_code(telegram_id: int, request: str, stream: bool = False):
     messages.append({"role": "user", "content": request})
 
     if stream:
-        return await client.chat.completions.create(
+        async with log_timing(
+            "openai.code.create",
+            mode="stream",
+            user=telegram_id,
+            model=MODEL_NAME,
+            input_chars=len(request),
+            max_tokens=MAX_OUTPUT_TOKENS_CODE,
+        ):
+            return await client.chat.completions.create(
+                messages=messages,
+                model=MODEL_NAME,
+                max_completion_tokens=MAX_OUTPUT_TOKENS_CODE,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
+
+    async with log_timing(
+        "openai.code.create",
+        mode="full",
+        user=telegram_id,
+        model=MODEL_NAME,
+        input_chars=len(request),
+        max_tokens=MAX_OUTPUT_TOKENS_CODE,
+    ):
+        response = await client.chat.completions.create(
             messages=messages,
             model=MODEL_NAME,
-            max_completion_tokens=2000,
-            stream=True,
-            stream_options={"include_usage": True},
+            max_completion_tokens=MAX_OUTPUT_TOKENS_CODE,
         )
-
-    response = await client.chat.completions.create(
-        messages=messages,
-        model=MODEL_NAME,
-        max_completion_tokens=2000,
-    )
     bot_response = response.choices[0].message.content or ""
     if bot_response.strip():
         await save_context(telegram_id, request, bot_response)
@@ -327,19 +369,22 @@ async def read_pdf(file_path: str | os.PathLike) -> str:
     def _read() -> str:
         reader = PdfReader(str(file_path))
         return "\n".join((p.extract_text() or "") for p in reader.pages)
-    return await asyncio.to_thread(_read)
+    async with log_timing("read_pdf", path=str(file_path)):
+        return await asyncio.to_thread(_read)
 
 
 async def read_docx(file_path: str | os.PathLike) -> str:
     def _read() -> str:
         doc = Document(str(file_path))
         return " ".join(p.text for p in doc.paragraphs if p.text)
-    return await asyncio.to_thread(_read)
+    async with log_timing("read_docx", path=str(file_path)):
+        return await asyncio.to_thread(_read)
 
 
 async def read_txt(file_path: str | os.PathLike) -> str:
-    async with aiofiles.open(file_path, "r", encoding="utf-8", errors="replace") as f:
-        return await f.read()
+    async with log_timing("read_txt", path=str(file_path)):
+        async with aiofiles.open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            return await f.read()
 
 
 async def format_datetime(dt: datetime) -> str:

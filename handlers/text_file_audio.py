@@ -1,4 +1,11 @@
-"""Обработчик text/voice/document/photo сообщений с устойчивым streaming."""
+"""Обработчик text/voice/document/photo сообщений.
+
+Главные новые фичи:
+- Кнопка [❌ Отменить] под loader-ом и под стрим-сообщением — реально
+  отменяет async-задачу (через task.cancel()).
+- Детальный DEBUG-лог: для каждого запроса видно тайминг, стадию (analyze /
+  stream / final), статус (OK / FAIL / CANCELLED), размеры данных и счётчики.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -17,7 +24,7 @@ from aiogram.enums.chat_member_status import ChatMemberStatus
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import (
     CallbackQuery,
-    FSInputFile,
+    InlineKeyboardMarkup,
     Message,
     ReactionTypeEmoji,
 )
@@ -39,7 +46,13 @@ from config.config import (
 )
 from keyboards.keyboards import channel_subscription_keyboard
 from lexicon.lexicon import LEXICON_RU as lexicon
-from utils.code_generator import CodeGenerator
+from utils.cancellation import (
+    CANCEL_CB_PREFIX,
+    cancel_task,
+    make_cancel_keyboard,
+    parse_cancel_data,
+    register_task,
+)
 from utils.functions import (
     generate_code,
     markdown_to_telegram_html,
@@ -50,6 +63,7 @@ from utils.functions import (
     read_txt,
     save_context,
 )
+from utils.logging_helpers import log_event, log_timing
 from utils.telegram_helpers import (
     safe_answer,
     safe_edit_text,
@@ -67,28 +81,27 @@ DOCUMENTS_DIR = Path("documents")
 DOCUMENTS_DIR.mkdir(exist_ok=True)
 
 analyzer = UniversalAnalyzer(groq_client)
-code_gen = CodeGenerator()
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Per-user lock — чтобы параллельные сообщения от одного пользователя не путались
+# Per-user lock
 # ────────────────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def user_lock(user_id: int):
-    """
-    SET NX EX в Redis. Если блокировка уже есть — пропускаем обработку
-    (пользователю показываем мягкое сообщение в caller-е).
-    """
+    """SET NX EX в Redis — параллельные сообщения от одного юзера сериализуются."""
     key = f"user:{user_id}:lock"
     acquired = await redis.set(key, b"1", ex=USER_LOCK_TTL, nx=True)
     if not acquired:
+        log_event("user_lock.busy", user=user_id)
         yield False
         return
+    log_event("user_lock.acquired", user=user_id)
     try:
         yield True
     finally:
         with suppress(Exception):
             await redis.delete(key)
+        log_event("user_lock.released", user=user_id)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -96,7 +109,8 @@ async def user_lock(user_id: int):
 # ────────────────────────────────────────────────────────────────────────────
 async def is_subscribed(user_id: int) -> bool:
     try:
-        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        async with log_timing("telegram.get_chat_member", user=user_id, channel=CHANNEL_USERNAME):
+            member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
         return member.status in (
             ChatMemberStatus.MEMBER,
             ChatMemberStatus.ADMINISTRATOR,
@@ -119,141 +133,192 @@ async def check_subscription(msg: Message) -> bool:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Streaming — главное место, где раньше «обрывался ответ»
+# Streaming
 # ────────────────────────────────────────────────────────────────────────────
 async def _stream_via_edit_text(
     msg: Message,
     stream_response,
+    initial_message: Message | None = None,
+    cancel_markup: InlineKeyboardMarkup | None = None,
 ) -> str:
     """
-    Классический стриминг через sendMessage + editMessageText.
-    Все вызовы Telegram идут через safe_edit_text/safe_answer —
-    MessageNotModified и RetryAfter обрабатываются прозрачно.
+    Стриминг через editMessageText с кнопкой [❌ Отменить].
 
-    Возвращает полный собранный ответ (даже если последние правки в Telegram
-    зафейлились — текст в любом случае не теряется).
+    cancel_markup передаётся на КАЖДОМ edit, иначе Telegram удаляет кнопку.
+    На финальном edit передаётся reply_markup=None — кнопка снимается.
     """
     full_response = ""
     buffer = ""
     sent_message: Message | None = None
     last_shown_html = ""
-    last_update = time.monotonic() - TIME_STREAM_UPDATE  # чтобы первый чанк не ждал
+    last_update = time.monotonic() - TIME_STREAM_UPDATE
+    stream_error: Exception | None = None
+    chunks_received = 0
+    edits_done = 0
 
-    async for chunk in stream_response:
-        # Отдельные чанки могут содержать только usage без content — пропускаем,
-        # но НЕ через continue после проверки content (иначе можно проскочить контент).
-        if not chunk.choices:
-            continue
-        delta = chunk.choices[0].delta.content
-        if not delta:
-            continue
+    if initial_message is not None:
+        sent_message = initial_message
 
-        buffer += delta
-        full_response += delta  # копим полный ответ независимо от рендера в TG
+    stream_start = time.monotonic()
 
-        elapsed = time.monotonic() - last_update
-        ready_to_show = (
-            len(buffer) >= STREAM_MAX_CHUNK_SIZE
-            or (elapsed >= TIME_STREAM_UPDATE and len(buffer) >= STREAM_MIN_CHUNK_SIZE)
-        )
-        if not ready_to_show:
-            continue
+    try:
+        async for chunk in stream_response:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta.content
+            if not delta:
+                continue
 
-        html_now = markdown_to_telegram_html(full_response)
-        if not html_now.strip() or html_now == last_shown_html:
+            chunks_received += 1
+            buffer += delta
+            full_response += delta
+
+            elapsed = time.monotonic() - last_update
+            ready_to_show = (
+                len(buffer) >= STREAM_MAX_CHUNK_SIZE
+                or (elapsed >= TIME_STREAM_UPDATE and len(buffer) >= STREAM_MIN_CHUNK_SIZE)
+            )
+            if not ready_to_show:
+                continue
+
+            html_now = markdown_to_telegram_html(full_response)
+            if not html_now.strip() or html_now == last_shown_html:
+                buffer = ""
+                continue
+
+            if sent_message is None:
+                sent_message = await safe_answer(
+                    msg, html_now, parse_mode="HTML", reply_markup=cancel_markup
+                )
+                if sent_message is not None:
+                    last_shown_html = html_now
+                    last_update = time.monotonic()
+                    edits_done += 1
+            else:
+                ok = await safe_edit_text(
+                    sent_message, html_now, parse_mode="HTML", reply_markup=cancel_markup
+                )
+                if ok:
+                    last_shown_html = html_now
+                    last_update = time.monotonic()
+                    edits_done += 1
+
             buffer = ""
-            continue
 
-        if sent_message is None:
-            sent_message = await safe_answer(msg, html_now, parse_mode="HTML")
-            if sent_message is not None:
-                last_shown_html = html_now
-                last_update = time.monotonic()
-        else:
-            ok = await safe_edit_text(sent_message, html_now, parse_mode="HTML")
-            if ok:
-                last_shown_html = html_now
-                last_update = time.monotonic()
-            # если ok=False — просто продолжаем, в финале попытаемся ещё раз
+    except asyncio.CancelledError:
+        # Не глотаем — это сигнал отмены пользователем или shutdown'а
+        log_event(
+            "stream.cancelled",
+            chunks=chunks_received,
+            edits=edits_done,
+            chars=len(full_response),
+            took_ms=int((time.monotonic() - stream_start) * 1000),
+        )
+        raise
+    except Exception as e:
+        logger.warning(f"Stream interrupted mid-flight: {e}")
+        stream_error = e
 
-        buffer = ""
-
-    # Финальная отправка ВСЕГДА в try/except — это и был главный баг.
-    # Теперь даже если последний edit упадёт с RetryAfter или MessageNotModified,
-    # мы уже не пробросим исключение наружу.
-    final_html = markdown_to_telegram_html(full_response)
+    # ── Финал: всегда выводим то, что успели накопить (без cancel-кнопки) ──
     if not full_response.strip():
-        return full_response  # ответ пустой — обработает caller
+        if stream_error:
+            raise stream_error
+        return full_response
+
+    final_html = markdown_to_telegram_html(full_response)
 
     if sent_message is None:
-        # Стриминг закончился, не отправив ни одного апдейта (короткий ответ)
         await send_long_text(msg, final_html, parse_mode="HTML")
     elif final_html != last_shown_html:
-        # Обновляем финальной версией — но НЕ падаем если не получилось
-        ok = await safe_edit_text(sent_message, final_html, parse_mode="HTML")
+        # На финале reply_markup=None — кнопка [Отменить] исчезает
+        ok = await safe_edit_text(sent_message, final_html, parse_mode="HTML", reply_markup=None)
         if not ok:
             logger.warning("Final edit failed — sending as a new message to ensure delivery")
             await send_long_text(msg, final_html, parse_mode="HTML")
+    else:
+        # Текст не изменился, но кнопку убрать всё равно надо
+        with suppress(Exception):
+            await sent_message.edit_reply_markup(reply_markup=None)
 
+    log_event(
+        "stream.done",
+        chunks=chunks_received,
+        edits=edits_done,
+        chars=len(full_response),
+        took_ms=int((time.monotonic() - stream_start) * 1000),
+        error=type(stream_error).__name__ if stream_error else None,
+    )
     return full_response
 
 
 async def _stream_via_native_draft(
     msg: Message,
     stream_response,
+    initial_message: Message | None = None,
+    cancel_markup: InlineKeyboardMarkup | None = None,
 ) -> str:
-    """
-    Native draft streaming через sendMessageDraft (Bot API 9.5+, март 2026).
-    Без мерцания, без rate-limit-issues от edit_text.
-    Если первый же запрос провалился — мгновенно падаем в edit_text fallback.
-    """
+    """Native draft streaming через sendMessageDraft (Bot API 9.5+)."""
     full_response = ""
     buffer = ""
     last_update = time.monotonic() - TIME_STREAM_UPDATE
     draft_id = random.randint(1, 2**31 - 1)
     chat_id = msg.chat.id
     drafts_supported = True
+    stream_error: Exception | None = None
 
-    async for chunk in stream_response:
-        if not chunk.choices:
-            continue
-        delta = chunk.choices[0].delta.content
-        if not delta:
-            continue
+    # В native режиме loader не нужен (drafts отображаются в отдельном bubble)
+    if initial_message is not None:
+        with suppress(Exception):
+            await initial_message.delete()
 
-        buffer += delta
-        full_response += delta
-
-        elapsed = time.monotonic() - last_update
-        ready = (
-            len(buffer) >= STREAM_MAX_CHUNK_SIZE
-            or (elapsed >= 0.5 and len(buffer) >= STREAM_MIN_CHUNK_SIZE)  # native быстрее
-        )
-        if not ready or not drafts_supported:
-            continue
-
-        html_now = markdown_to_telegram_html(full_response)
-        if not html_now.strip():
-            buffer = ""
-            continue
-
-        ok = await send_message_draft(bot, chat_id, draft_id, html_now, parse_mode="HTML")
-        if not ok:
-            drafts_supported = False  # сервер не поддерживает — добиваем в edit_text
-            break
-        last_update = time.monotonic()
-        buffer = ""
-
-    if not drafts_supported:
-        # Дочитываем оставшиеся чанки и переключаемся на edit_text
+    try:
         async for chunk in stream_response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                full_response += chunk.choices[0].delta.content
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta.content
+            if not delta:
+                continue
 
-    # Финал — обычное сообщение, оно автоматически "коммитит" драфт у клиента
+            buffer += delta
+            full_response += delta
+
+            elapsed = time.monotonic() - last_update
+            ready = (
+                len(buffer) >= STREAM_MAX_CHUNK_SIZE
+                or (elapsed >= 0.5 and len(buffer) >= STREAM_MIN_CHUNK_SIZE)
+            )
+            if not ready or not drafts_supported:
+                continue
+
+            html_now = markdown_to_telegram_html(full_response)
+            if not html_now.strip():
+                buffer = ""
+                continue
+
+            ok = await send_message_draft(bot, chat_id, draft_id, html_now, parse_mode="HTML")
+            if not ok:
+                drafts_supported = False
+                break
+            last_update = time.monotonic()
+            buffer = ""
+
+        if not drafts_supported:
+            async for chunk in stream_response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    full_response += chunk.choices[0].delta.content
+
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"Native draft stream interrupted: {e}")
+        stream_error = e
+
     if full_response.strip():
         final_html = markdown_to_telegram_html(full_response)
+        # Финальное сообщение без cancel-кнопки (запрос завершён)
         await send_long_text(msg, final_html, parse_mode="HTML")
+    elif stream_error:
+        raise stream_error
 
     return full_response
 
@@ -262,25 +327,36 @@ async def handle_streaming_response(
     msg: Message,
     stream_response,
     save_as_question: str,
+    initial_message: Message | None = None,
+    cancel_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
-    """Точка входа в стриминг: выбирает native/legacy режим и сохраняет контекст."""
-    try:
-        if USE_NATIVE_DRAFT_STREAM:
-            full_response = await _stream_via_native_draft(msg, stream_response)
-        else:
-            full_response = await _stream_via_edit_text(msg, stream_response)
-    except Exception as e:
-        logger.exception(f"Streaming failed: {e}")
-        await safe_answer(msg, "Произошла ошибка при получении ответа. Попробуйте ещё раз.")
-        return
+    """Точка входа в стриминг + сохранение контекста.
+
+    CancelledError ПРОБРАСЫВАЕТСЯ — её ловит process_content и редактирует
+    loader в «❌ Отменено». Здесь только нерекуррентные ошибки.
+    """
+    if USE_NATIVE_DRAFT_STREAM:
+        full_response = await _stream_via_native_draft(
+            msg, stream_response, initial_message, cancel_markup
+        )
+    else:
+        full_response = await _stream_via_edit_text(
+            msg, stream_response, initial_message, cancel_markup
+        )
 
     if not full_response.strip():
         logger.error("Empty streaming response")
-        await safe_answer(msg, "Произошла ошибка: ответ нейросети пустой.")
+        if initial_message is not None:
+            await safe_edit_text(
+                initial_message,
+                "❌ Произошла ошибка: ответ нейросети пустой.",
+                parse_mode="HTML",
+                reply_markup=None,
+            )
+        else:
+            await safe_answer(msg, "Произошла ошибка: ответ нейросети пустой.")
         return
 
-    # Сохраняем контекст ОТДЕЛЬНО от показа в TG — чтобы даже при сбоях UI
-    # история диалога не терялась
     try:
         await save_context(msg.from_user.id, save_as_question, full_response)
     except Exception as e:
@@ -288,45 +364,98 @@ async def handle_streaming_response(
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Файл с кодом
+# Основной пайплайн
 # ────────────────────────────────────────────────────────────────────────────
-async def send_code_file(msg: Message, code_response: str, loader: Message | None) -> None:
-    filepath, display_name = code_gen.create_file(code_response)
+async def _do_processing(
+    msg: Message,
+    content: str,
+    image_paths: list[str] | None,
+    loader: Message,
+    cancel_markup: InlineKeyboardMarkup,
+) -> None:
+    """
+    Та самая работа, которая может быть отменена. Запускается как Task,
+    регистрируется в реестре отмены по (chat_id, loader.message_id).
+    """
+    has_images = bool(image_paths)
+    user_id = msg.from_user.id
+
     try:
-        if filepath is None:
-            logger.warning("Could not extract code from response")
-            if loader:
-                with suppress(TelegramBadRequest):
-                    await loader.delete()
-            await safe_answer(msg, "❌ Не удалось извлечь код из ответа модели")
-            return
+        async with log_timing("pipeline.analyze", user=user_id, has_images=has_images):
+            wants_code, processed_content = await analyzer.analyze(content, image_paths)
 
-        doc = FSInputFile(str(filepath), filename=display_name)
-        if loader:
-            with suppress(TelegramBadRequest):
-                await loader.delete()
-        await msg.answer_document(
-            doc,
-            caption='<b>Ваш код готов</b> <tg-emoji emoji-id="5208727996315220567">✅</tg-emoji>',
-            parse_mode="HTML",
+        log_event(
+            "pipeline.intent",
+            user=user_id,
+            intent="CODE" if wants_code else "TEXT",
+            processed_chars=len(processed_content),
         )
+
+        request_content = processed_content if has_images else content
+
+        # Loader — переключаем на «готовлю ответ» (если был «распознаю»)
+        if has_images:
+            await safe_edit_text(
+                loader,
+                "✍️ <b>Готовлю ответ...</b>",
+                parse_mode="HTML",
+                reply_markup=cancel_markup,
+            )
+
+        if wants_code:
+            with suppress(Exception):
+                await msg.react([ReactionTypeEmoji(emoji=random.choice(POPULAR_EMOJIS))])
+
+            stream = await generate_code(
+                telegram_id=user_id,
+                request=request_content,
+                stream=True,
+            )
+        else:
+            stream = await process_request(
+                telegram_id=user_id,
+                content=request_content,
+                stream=True,
+            )
+
+        await handle_streaming_response(
+            msg,
+            stream,
+            save_as_question=content,
+            initial_message=loader,
+            cancel_markup=cancel_markup,
+        )
+
+    except asyncio.CancelledError:
+        # Обрабатываем здесь, чтобы пользователь увидел понятное сообщение.
+        # НЕ пере-raise — задача завершается «успешно отменённой».
+        log_event("pipeline.cancelled", user=user_id)
+        with suppress(Exception):
+            await safe_edit_text(
+                loader,
+                "⏹ <b>Запрос отменён</b>",
+                parse_mode="HTML",
+                reply_markup=None,
+            )
+    except ValueError as e:
+        # Бизнес-ошибки (валидация изображений и т.п.)
+        await safe_edit_text(loader, f"❌ {e}", parse_mode="HTML", reply_markup=None)
     except Exception as e:
-        logger.exception(f"Failed to send code file: {e}")
-        await safe_answer(msg, "❌ Ошибка при отправке файла с кодом")
-    finally:
-        if filepath and filepath.exists():
-            with suppress(OSError):
-                filepath.unlink()
+        logger.exception(f"_do_processing failed: {e}")
+        await safe_edit_text(
+            loader,
+            "❌ Произошла ошибка при обработке запроса. Попробуйте позже.",
+            parse_mode="HTML",
+            reply_markup=None,
+        )
 
 
-# ────────────────────────────────────────────────────────────────────────────
-# Основной пайплайн обработки контента
-# ────────────────────────────────────────────────────────────────────────────
 async def process_content(
     msg: Message,
     content: str,
     image_paths: list[str] | None = None,
 ) -> None:
+    """Точка входа: проверки, lock, loader с кнопкой отмены, запуск задачи."""
     if not await check_subscription(msg):
         return
 
@@ -339,58 +468,60 @@ async def process_content(
         return
 
     user_id = msg.from_user.id
+    has_images = bool(image_paths)
+
+    log_event(
+        "msg.received",
+        user=user_id,
+        chat=msg.chat.id,
+        has_images=has_images,
+        n_images=len(image_paths or []),
+        chars=len(content),
+    )
 
     async with user_lock(user_id) as acquired:
         if not acquired:
             await safe_answer(
                 msg,
-                "⏳ Я ещё обрабатываю ваше предыдущее сообщение. Дождитесь ответа, пожалуйста.",
+                "⏳ Я ещё обрабатываю ваше предыдущее сообщение. Дождитесь ответа, "
+                "или нажмите «Отменить» под предыдущим сообщением.",
             )
             return
 
-        # Typing indicator всё время обработки — пользователь видит что бот работает
+        # ─── Loader с кнопкой [❌ Отменить] ───
+        # Текст подбираем под тип входа.
+        if has_images:
+            initial_text = "🖼 <b>Распознаю изображение...</b>"
+        else:
+            initial_text = "💭 <b>Думаю...</b>"
+
+        # Сначала отправляем БЕЗ кнопки, чтобы получить message_id;
+        # потом вешаем кнопку с этим id в callback_data.
+        loader = await safe_answer(msg, initial_text, parse_mode="HTML")
+        if loader is None:
+            logger.error(f"Could not send loader for user {user_id}")
+            return
+
+        cancel_markup = make_cancel_keyboard(loader.chat.id, loader.message_id)
+        # Прицепляем кнопку
+        await safe_edit_text(
+            loader, initial_text, parse_mode="HTML", reply_markup=cancel_markup
+        )
+
+        # ─── Запускаем работу как Task, чтобы её можно было cancel() ───
+        task = asyncio.create_task(
+            _do_processing(msg, content, image_paths, loader, cancel_markup),
+            name=f"process-{user_id}-{loader.message_id}",
+        )
+        register_task(loader.chat.id, loader.message_id, task)
+
         async with ChatActionSender.typing(chat_id=msg.chat.id, bot=bot):
             try:
-                wants_code, processed_content = await analyzer.analyze(content, image_paths)
-                logger.info(f"User {user_id} wants {'CODE' if wants_code else 'TEXT'}")
-
-                # Для текста без картинок — отдаём в модель оригинальный вопрос пользователя.
-                # Если есть картинки — нужен processed (там описание картинок от анализатора).
-                request_content = processed_content if image_paths else content
-
-                if wants_code:
-                    # Реакция-эмодзи — best effort, не падать если нет прав
-                    with suppress(Exception):
-                        await msg.react([ReactionTypeEmoji(emoji=random.choice(POPULAR_EMOJIS))])
-
-                    loader = await safe_answer(
-                        msg,
-                        '<b>Генерация кода</b> <tg-emoji emoji-id="5339139919434498721">👾</tg-emoji>',
-                        parse_mode="HTML",
-                    )
-                    response = await generate_code(
-                        telegram_id=user_id,
-                        request=request_content,
-                        stream=False,
-                    )
-                    await send_code_file(msg, response, loader)
-                else:
-                    response = await process_request(
-                        telegram_id=user_id,
-                        content=request_content,
-                        stream=USE_STREAM,
-                    )
-                    if USE_STREAM:
-                        # Сохраняем в контекст ОРИГИНАЛЬНЫЙ вопрос пользователя
-                        await handle_streaming_response(msg, response, save_as_question=content)
-                    else:
-                        await send_long_text(msg, markdown_to_telegram_html(response), parse_mode="HTML")
-
-            except ValueError as e:
-                await safe_answer(msg, f"❌ {e}")
-            except Exception as e:
-                logger.exception(f"process_content failed: {e}")
-                await safe_answer(msg, "Произошла ошибка при обработке запроса. Попробуйте позже.")
+                # await не должен падать, потому что _do_processing внутри ловит всё
+                await task
+            except asyncio.CancelledError:
+                # На случай если cancel прилетел во внешнем await раньше внутреннего
+                log_event("pipeline.outer_cancel", user=user_id)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -415,9 +546,10 @@ async def voice_handler(msg: Message) -> None:
         voice_path = DOCUMENTS_DIR / f"{msg.voice.file_id}.ogg"
 
         async with ChatActionSender(action=ChatAction.RECORD_VOICE, chat_id=msg.chat.id, bot=bot):
-            buf = await bot.download(msg.voice.file_id)
-            async with aiofiles.open(voice_path, "wb") as f:
-                await f.write(buf.read())
+            async with log_timing("telegram.download_voice", file_id=msg.voice.file_id):
+                buf = await bot.download(msg.voice.file_id)
+                async with aiofiles.open(voice_path, "wb") as f:
+                    await f.write(buf.read())
 
             text = await process_audio_with_whisper(
                 telegram_id=msg.from_user.id,
@@ -446,14 +578,18 @@ async def document_handler(msg: Message) -> None:
         if not await check_subscription(msg):
             return
 
-        file = await bot.get_file(msg.document.file_id)
-        # Защита от ошибочного парсинга пути из старого кода (split('/')[1] падал)
+        async with log_timing("telegram.get_file", file_id=msg.document.file_id):
+            file = await bot.get_file(msg.document.file_id)
         remote_basename = os.path.basename(file.file_path)
-        # Уникализируем имя — несколько одинаковых файлов одного юзера не перетрут друг друга
         file_path = DOCUMENTS_DIR / f"{msg.document.file_id}_{remote_basename}"
 
         async with ChatActionSender(action=ChatAction.UPLOAD_DOCUMENT, chat_id=msg.chat.id, bot=bot):
-            await bot.download_file(file.file_path, file_path)
+            async with log_timing(
+                "telegram.download_file",
+                size=msg.document.file_size,
+                name=msg.document.file_name,
+            ):
+                await bot.download_file(file.file_path, file_path)
 
             filename = (msg.document.file_name or "").lower()
             if filename.endswith(".pdf"):
@@ -500,7 +636,6 @@ async def photo_handler(msg: Message) -> None:
         media_group_id = msg.media_group_id
 
         if media_group_id:
-            # Альбом: первый обработчик собирает все фото, остальные выходят сразу
             key = f"album:{msg.from_user.id}:{media_group_id}"
             photo_info = json.dumps({
                 "file_id": msg.photo[-1].file_id,
@@ -508,15 +643,12 @@ async def photo_handler(msg: Message) -> None:
             })
             await redis.lpush(key, photo_info)
 
-            # Лидер — тот, кто захватил блокировку
             is_leader = await redis.set(f"{key}:lock", b"1", ex=10, nx=True)
             if not is_leader:
                 return
 
-            # Ждём остальные фото (Telegram доставляет альбом в течение ~1 сек)
             await asyncio.sleep(1.2)
 
-            # Атомарно забираем все накопленные фото и удаляем ключи
             async with redis.pipeline(transaction=True) as pipe:
                 pipe.lrange(key, 0, -1)
                 pipe.delete(key, f"{key}:lock")
@@ -539,17 +671,17 @@ async def photo_handler(msg: Message) -> None:
                 await bot.download_file(f.file_path, fp)
                 return str(fp)
 
-            # Скачиваем альбом параллельно — десятки секунд экономии
-            image_paths = await asyncio.gather(*(_download(e) for e in album_data))
+            async with log_timing("telegram.download_album", count=len(album_data)):
+                image_paths = await asyncio.gather(*(_download(e) for e in album_data))
 
             content = caption or "Опиши что на изображениях. Если есть текст или задачи — извлеки их."
             await process_content(msg, content, image_paths=image_paths)
 
         else:
-            # Одиночное фото
             f = await bot.get_file(msg.photo[-1].file_id)
             fp = DOCUMENTS_DIR / f"{msg.photo[-1].file_id}.jpg"
-            await bot.download_file(f.file_path, fp)
+            async with log_timing("telegram.download_photo", file_id=msg.photo[-1].file_id):
+                await bot.download_file(f.file_path, fp)
             image_paths.append(str(fp))
 
             content = msg.caption or "Опиши что на изображении. Если есть текст или задача — извлеки его полностью."
@@ -562,6 +694,36 @@ async def photo_handler(msg: Message) -> None:
         for p in image_paths:
             with suppress(OSError, FileNotFoundError):
                 os.remove(p)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Callback-хендлеры
+# ────────────────────────────────────────────────────────────────────────────
+@rt.callback_query(lambda c: c.data and c.data.startswith(CANCEL_CB_PREFIX))
+async def cancel_callback(callback: CallbackQuery) -> None:
+    """Обработка нажатия [❌ Отменить] под сообщением бота."""
+    parsed = parse_cancel_data(callback.data or "")
+    if parsed is None:
+        await callback.answer("Некорректные данные", show_alert=False)
+        return
+
+    chat_id, message_id = parsed
+    log_event(
+        "cancel.button_pressed",
+        user=callback.from_user.id,
+        chat=chat_id,
+        message=message_id,
+    )
+
+    cancelled = cancel_task(chat_id, message_id)
+    if cancelled:
+        await callback.answer("⏹ Запрос отменяется...")
+    else:
+        await callback.answer("Запрос уже завершён", show_alert=False)
+        # Если задачи нет — снимем кнопку, чтобы юзер её больше не видел
+        if callback.message:
+            with suppress(Exception):
+                await callback.message.edit_reply_markup(reply_markup=None)
 
 
 @rt.callback_query(lambda c: c.data == "check_subscription")
