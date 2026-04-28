@@ -433,7 +433,7 @@ async def _do_processing(
         with suppress(Exception):
             await safe_edit_text(
                 loader,
-                "⏹ <b>Запрос отменён</b>",
+                "<b>Запрос отменён</b>",
                 parse_mode="HTML",
                 reply_markup=None,
             )
@@ -717,7 +717,7 @@ async def cancel_callback(callback: CallbackQuery) -> None:
 
     cancelled = cancel_task(chat_id, message_id)
     if cancelled:
-        await callback.answer("⏹ Запрос отменяется...")
+        await callback.answer("Запрос отменяется...")
     else:
         await callback.answer("Запрос уже завершён", show_alert=False)
         # Если задачи нет — снимем кнопку, чтобы юзер её больше не видел
