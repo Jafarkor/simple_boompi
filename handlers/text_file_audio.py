@@ -39,6 +39,7 @@ from config.config import (
     MAX_IMAGES_PER_REQUEST,
     USE_STREAM,
     USE_NATIVE_DRAFT_STREAM,
+    USE_RICH_MESSAGES,
     TIME_STREAM_UPDATE,
     STREAM_MIN_CHUNK_SIZE,
     STREAM_MAX_CHUNK_SIZE,
@@ -54,6 +55,7 @@ from utils.cancellation import (
     register_task,
 )
 from utils.functions import (
+    contains_rich_markup,
     generate_code,
     markdown_to_telegram_html,
     process_audio_with_whisper,
@@ -67,6 +69,8 @@ from utils.logging_helpers import log_event, log_timing
 from utils.telegram_helpers import (
     safe_answer,
     safe_edit_text,
+    safe_edit_text_rich,
+    send_long_rich_text,
     send_long_text,
     send_message_draft,
 )
@@ -226,8 +230,19 @@ async def _stream_via_edit_text(
         return full_response
 
     final_html = markdown_to_telegram_html(full_response)
+    use_rich = USE_RICH_MESSAGES and contains_rich_markup(full_response)
 
-    if sent_message is None:
+    if use_rich:
+        # Таблица/формула в ответе — отправляем как Rich Message (Bot API 10.1),
+        # чтобы они реально отрендерились, а не остались сырым markdown-текстом.
+        if sent_message is None:
+            await send_long_rich_text(msg, full_response)
+        else:
+            ok = await safe_edit_text_rich(sent_message, full_response, reply_markup=None)
+            if not ok:
+                logger.warning("Final rich edit failed — sending as a new rich message")
+                await send_long_rich_text(msg, full_response)
+    elif sent_message is None:
         await send_long_text(msg, final_html, parse_mode="HTML")
     elif final_html != last_shown_html:
         # На финале reply_markup=None — кнопка [Отменить] исчезает
@@ -314,9 +329,12 @@ async def _stream_via_native_draft(
         stream_error = e
 
     if full_response.strip():
-        final_html = markdown_to_telegram_html(full_response)
         # Финальное сообщение без cancel-кнопки (запрос завершён)
-        await send_long_text(msg, final_html, parse_mode="HTML")
+        if USE_RICH_MESSAGES and contains_rich_markup(full_response):
+            await send_long_rich_text(msg, full_response)
+        else:
+            final_html = markdown_to_telegram_html(full_response)
+            await send_long_text(msg, final_html, parse_mode="HTML")
     elif stream_error:
         raise stream_error
 

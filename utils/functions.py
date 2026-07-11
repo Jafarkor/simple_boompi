@@ -114,6 +114,33 @@ async def process_audio_with_whisper(telegram_id: int, file_path: str) -> str:
 _ALLOWED_TAGS = {"b", "i", "u", "s", "code", "pre", "a", "blockquote"}
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Rich Messages (Bot API 10.1, июнь 2026) — детект таблиц/формул
+# ────────────────────────────────────────────────────────────────────────────
+_MD_TABLE_ROW_RE = re.compile(r"^\s*\|.+\|\s*$", re.MULTILINE)
+_MD_TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$", re.MULTILINE)
+_LATEX_BLOCK_RE = re.compile(r"\$\$.+?\$\$", re.DOTALL)
+_LATEX_INLINE_RE = re.compile(r"(?<!\$)\$(?!\$)[^\n$]+?(?<!\$)\$(?!\$)")
+_LATEX_BRACKET_RE = re.compile(r"\\\[.+?\\\]|\\\(.+?\\\)", re.DOTALL)
+
+
+def contains_rich_markup(text: str) -> bool:
+    """
+    True, если в тексте есть markdown-таблица или LaTeX-формула — такие ответы
+    стоит отправлять через sendRichMessage (Bot API 10.1), а не через
+    markdown_to_telegram_html, который таблицы/формулы не умеет рендерить.
+    """
+    if not text:
+        return False
+    if _MD_TABLE_SEP_RE.search(text) and _MD_TABLE_ROW_RE.search(text):
+        return True
+    if _LATEX_BLOCK_RE.search(text) or _LATEX_BRACKET_RE.search(text):
+        return True
+    if _LATEX_INLINE_RE.search(text):
+        return True
+    return False
+
+
 def markdown_to_telegram_html(text: str) -> str:
     """
     Конвертирует Markdown в безопасный для Telegram HTML.

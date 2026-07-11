@@ -1,5 +1,7 @@
-# Bot framework — поддержка Bot API 9.6 (sendMessageDraft и др.)
-aiogram==3.27.0
+# Bot framework — поддержка Bot API 10.1 (Rich Messages: таблицы, LaTeX-формулы,
+# sendRichMessage/sendRichMessageDraft, rich_message в editMessageText).
+# Добавлено в aiogram 3.29.0, см. https://docs.aiogram.dev/en/latest/changelog.html
+aiogram>=3.29.1
 
 # Web сервер для webhook
 aiohttp>=3.10,<3.13

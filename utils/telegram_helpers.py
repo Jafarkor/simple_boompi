@@ -25,9 +25,9 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
 )
 from aiogram.methods import SendMessageDraft
-from aiogram.types import InlineKeyboardMarkup, Message
+from aiogram.types import InlineKeyboardMarkup, InputRichMessage, Message
 
-from config.config import MAX_TELEGRAM_MESSAGE_LENGTH
+from config.config import MAX_RICH_MESSAGE_LENGTH, MAX_TELEGRAM_MESSAGE_LENGTH
 
 logger = logging.getLogger(__name__)
 
@@ -214,3 +214,108 @@ async def send_message_draft(
     except Exception as e:
         logger.warning(f"sendMessageDraft failed, falling back to edit_text: {e}")
         return False
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Rich Messages (Bot API 10.1, июнь 2026) — таблицы, LaTeX-формулы и т.п.
+#
+# InputRichMessage(markdown=...) — Telegram сам парсит markdown (включая
+# таблицы вида | a | b | и LaTeX $...$/$$...$$) и рендерит их нативно.
+# Если это по какой-то причине не удаётся (старая версия Bot API сервера,
+# сетевая ошибка и т.п.) — откатываемся на старый markdown_to_telegram_html
+# + обычный safe_answer/safe_edit_text.
+# ────────────────────────────────────────────────────────────────────────────
+async def safe_answer_rich(
+    message: Message,
+    markdown_text: str,
+    *,
+    reply_markup: Optional[InlineKeyboardMarkup] = None,
+) -> Optional[Message]:
+    """Отправляет ответ как Rich Message. При неудаче — fallback на HTML."""
+    try:
+        return await message.answer_rich(
+            InputRichMessage(markdown=markdown_text),
+            reply_markup=reply_markup,
+        )
+    except TelegramRetryAfter as e:
+        wait = e.retry_after + random.uniform(0.1, 0.5)
+        logger.warning(f"answer_rich rate limited, sleeping {wait:.1f}s")
+        await asyncio.sleep(wait)
+        try:
+            return await message.answer_rich(
+                InputRichMessage(markdown=markdown_text),
+                reply_markup=reply_markup,
+            )
+        except Exception:
+            return await _fallback_html_answer(message, markdown_text, reply_markup)
+    except Exception as e:
+        logger.warning(f"answer_rich failed, falling back to HTML: {e}")
+        return await _fallback_html_answer(message, markdown_text, reply_markup)
+
+
+async def safe_edit_text_rich(
+    message: Message,
+    markdown_text: str,
+    *,
+    reply_markup: Optional[InlineKeyboardMarkup] = None,
+) -> bool:
+    """Редактирует сообщение как Rich Message. При неудаче — fallback на HTML edit."""
+    try:
+        await message.bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=message.message_id,
+            rich_message=InputRichMessage(markdown=markdown_text),
+            reply_markup=reply_markup,
+        )
+        return True
+    except TelegramBadRequest as e:
+        msg = str(e).lower()
+        if _NOT_MODIFIED_FRAGMENT in msg:
+            return True
+        logger.warning(f"edit_text (rich) BadRequest, falling back to HTML: {e}")
+        return await _fallback_html_edit(message, markdown_text, reply_markup)
+    except Exception as e:
+        logger.warning(f"edit_text (rich) failed, falling back to HTML: {e}")
+        return await _fallback_html_edit(message, markdown_text, reply_markup)
+
+
+async def send_long_rich_text(
+    message: Message,
+    markdown_text: str,
+    *,
+    reply_markup: Optional[InlineKeyboardMarkup] = None,
+) -> Optional[Message]:
+    """Как send_long_text, но для Rich Message (лимит 32768 символов вместо 4096)."""
+    if len(markdown_text) <= MAX_RICH_MESSAGE_LENGTH:
+        return await safe_answer_rich(message, markdown_text, reply_markup=reply_markup)
+
+    chunks = _split_text(markdown_text, MAX_RICH_MESSAGE_LENGTH)
+    first = None
+    for i, chunk in enumerate(chunks):
+        markup = reply_markup if i == 0 else None
+        sent = await safe_answer_rich(message, chunk, reply_markup=markup)
+        if first is None:
+            first = sent
+    return first
+
+
+async def _fallback_html_answer(
+    message: Message,
+    markdown_text: str,
+    reply_markup: Optional[InlineKeyboardMarkup],
+) -> Optional[Message]:
+    from utils.functions import markdown_to_telegram_html  # локальный импорт — избегаем цикла
+
+    html = markdown_to_telegram_html(markdown_text)
+    return await send_long_text(message, html, parse_mode="HTML", reply_markup=reply_markup)
+
+
+async def _fallback_html_edit(
+    message: Message,
+    markdown_text: str,
+    reply_markup: Optional[InlineKeyboardMarkup],
+) -> bool:
+    from utils.functions import markdown_to_telegram_html
+
+    html = markdown_to_telegram_html(markdown_text)
+    return await safe_edit_text(message, html, parse_mode="HTML", reply_markup=reply_markup)
